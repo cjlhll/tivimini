@@ -391,6 +391,8 @@ fun VideoPlayerScreen(
             channels = filteredChannels,
             selectedChannelUrl = channels.getOrNull(currentIndex)?.url,
             nowProgramTitleByChannelUrl = nowProgramTitleByUrl,
+            epgData = epgData,
+            nowMillis = nowMillis,
             onSelectGroup = { selectedGroup = it },
             onSelectChannel = { playChannel(it) },
             onClose = { drawerOpen = false }
