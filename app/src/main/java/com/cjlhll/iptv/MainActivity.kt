@@ -143,6 +143,7 @@ fun MainScreen() {
                             putExtra("VIDEO_URL", startChannel.url)
                             putExtra("VIDEO_TITLE", startChannel.title)
                             putExtra("PLAYLIST_FILE_NAME", playlistFileName)
+                            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                         context.startActivity(intent)
 

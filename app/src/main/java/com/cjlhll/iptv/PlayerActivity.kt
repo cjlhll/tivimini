@@ -54,6 +54,8 @@ class PlayerActivity : ComponentActivity() {
     private var onChannelStep: ((Int) -> Boolean)? = null
     private var setDrawerOpen: ((Boolean) -> Unit)? = null
     private var isDrawerOpen: Boolean = false
+    private var setSettingsDrawerOpen: ((Boolean) -> Unit)? = null
+    private var isSettingsDrawerOpen: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,7 +89,9 @@ class PlayerActivity : ComponentActivity() {
                         playlistFileName = playlistFileName,
                         setOnChannelStep = { onChannelStep = it },
                         setDrawerOpenController = { setDrawerOpen = it },
-                        onDrawerOpenChanged = { isDrawerOpen = it }
+                        onDrawerOpenChanged = { isDrawerOpen = it },
+                        setSettingsDrawerOpenController = { setSettingsDrawerOpen = it },
+                        onSettingsDrawerOpenChanged = { isSettingsDrawerOpen = it }
                     ) {
                         finish()
                     }
@@ -100,8 +104,22 @@ class PlayerActivity : ComponentActivity() {
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
-                    if (!isDrawerOpen) {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
                         setDrawerOpen?.invoke(true)
+                        return true
+                    }
+                }
+
+                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                        setSettingsDrawerOpen?.invoke(true)
+                        return true
+                    }
+                }
+
+                KeyEvent.KEYCODE_MENU -> {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                        setSettingsDrawerOpen?.invoke(true)
                         return true
                     }
                 }
@@ -111,14 +129,18 @@ class PlayerActivity : ComponentActivity() {
                         setDrawerOpen?.invoke(false)
                         return true
                     }
+                    if (isSettingsDrawerOpen) {
+                        setSettingsDrawerOpen?.invoke(false)
+                        return true
+                    }
                 }
 
                 KeyEvent.KEYCODE_DPAD_UP -> {
-                    if (!isDrawerOpen && onChannelStep?.invoke(-1) == true) return true
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && onChannelStep?.invoke(-1) == true) return true
                 }
 
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    if (!isDrawerOpen && onChannelStep?.invoke(1) == true) return true
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && onChannelStep?.invoke(1) == true) return true
                 }
             }
         }
@@ -135,10 +157,13 @@ fun VideoPlayerScreen(
     setOnChannelStep: (((Int) -> Boolean)?) -> Unit,
     setDrawerOpenController: (((Boolean) -> Unit)?) -> Unit,
     onDrawerOpenChanged: (Boolean) -> Unit,
+    setSettingsDrawerOpenController: (((Boolean) -> Unit)?) -> Unit,
+    onSettingsDrawerOpenChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
     var drawerOpen by remember { mutableStateOf(false) }
+    var settingsDrawerOpen by remember { mutableStateOf(false) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     val player = remember {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
@@ -183,13 +208,19 @@ fun VideoPlayerScreen(
 
     DisposableEffect(Unit) {
         setDrawerOpenController { drawerOpen = it }
+        setSettingsDrawerOpenController { settingsDrawerOpen = it }
         onDispose {
             setDrawerOpenController(null)
+            setSettingsDrawerOpenController(null)
         }
     }
 
     LaunchedEffect(drawerOpen) {
         onDrawerOpenChanged(drawerOpen)
+    }
+
+    LaunchedEffect(settingsDrawerOpen) {
+        onSettingsDrawerOpenChanged(settingsDrawerOpen)
     }
 
     DisposableEffect(url) {
@@ -324,7 +355,7 @@ fun VideoPlayerScreen(
     DisposableEffect(channels, currentIndex) {
         setOnChannelStep { direction ->
             if (channels.size < 2) return@setOnChannelStep false
-            if (drawerOpen) return@setOnChannelStep false
+            if (drawerOpen || settingsDrawerOpen) return@setOnChannelStep false
             val size = channels.size
             val nextIndex = (currentIndex + direction).let { raw ->
                 ((raw % size) + size) % size
@@ -398,23 +429,17 @@ fun VideoPlayerScreen(
             onClose = { drawerOpen = false }
         )
 
-        // Settings Button (Top-Right)
-        IconButton(
-            onClick = {
+        SettingsDrawer(
+            visible = settingsDrawerOpen,
+            onSourceConfigClick = {
                 val intent = Intent(context, MainActivity::class.java)
                 context.startActivity(intent)
-                (context as? android.app.Activity)?.finish()
+                // (context as? android.app.Activity)?.finish() // Keep PlayerActivity in back stack
             },
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(16.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Default.Settings,
-                contentDescription = "Settings",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-                modifier = Modifier.size(32.dp)
-            )
-        }
+            onEpgSettingsClick = {
+                // Placeholder
+            },
+            onClose = { settingsDrawerOpen = false }
+        )
     }
 }
