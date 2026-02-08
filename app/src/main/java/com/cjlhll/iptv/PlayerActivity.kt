@@ -26,23 +26,33 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.C
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
-import android.widget.Toast
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Surface
+import androidx.tv.material3.darkColorScheme
+import androidx.compose.ui.graphics.Color as ComposeColor
 
 class PlayerActivity : ComponentActivity() {
     private var onChannelStep: ((Int) -> Boolean)? = null
+    private var setDrawerOpen: ((Boolean) -> Unit)? = null
+    private var isDrawerOpen: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -52,13 +62,35 @@ class PlayerActivity : ComponentActivity() {
         val playlistFileName = intent.getStringExtra("PLAYLIST_FILE_NAME") ?: Prefs.getPlaylistFileName(this)
 
         setContent {
-            VideoPlayerScreen(
-                url = videoUrl,
-                title = videoTitle,
-                playlistFileName = playlistFileName,
-                setOnChannelStep = { onChannelStep = it }
-            ) {
-                finish()
+            val colorScheme = darkColorScheme(
+                primary = ComposeColor(0xFFBDBDBD),
+                onPrimary = ComposeColor.Black,
+                secondary = ComposeColor(0xFF757575),
+                onSecondary = ComposeColor.Black,
+                tertiary = ComposeColor(0xFF616161),
+                onTertiary = ComposeColor.White,
+                background = ComposeColor(0xFF121212),
+                onBackground = ComposeColor.White,
+                surface = ComposeColor(0xFF1E1E1E),
+                onSurface = ComposeColor.White
+            )
+
+            MaterialTheme(colorScheme = colorScheme) {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = androidx.compose.ui.graphics.RectangleShape
+                ) {
+                    VideoPlayerScreen(
+                        url = videoUrl,
+                        title = videoTitle,
+                        playlistFileName = playlistFileName,
+                        setOnChannelStep = { onChannelStep = it },
+                        setDrawerOpenController = { setDrawerOpen = it },
+                        onDrawerOpenChanged = { isDrawerOpen = it }
+                    ) {
+                        finish()
+                    }
+                }
             }
         }
     }
@@ -66,12 +98,26 @@ class PlayerActivity : ComponentActivity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    if (!isDrawerOpen) {
+                        setDrawerOpen?.invoke(true)
+                        return true
+                    }
+                }
+
+                KeyEvent.KEYCODE_BACK -> {
+                    if (isDrawerOpen) {
+                        setDrawerOpen?.invoke(false)
+                        return true
+                    }
+                }
+
                 KeyEvent.KEYCODE_DPAD_UP -> {
-                    if (onChannelStep?.invoke(-1) == true) return true
+                    if (!isDrawerOpen && onChannelStep?.invoke(-1) == true) return true
                 }
 
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    if (onChannelStep?.invoke(1) == true) return true
+                    if (!isDrawerOpen && onChannelStep?.invoke(1) == true) return true
                 }
             }
         }
@@ -79,15 +125,20 @@ class PlayerActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun VideoPlayerScreen(
     url: String,
     title: String,
     playlistFileName: String?,
     setOnChannelStep: (((Int) -> Boolean)?) -> Unit,
+    setDrawerOpenController: (((Boolean) -> Unit)?) -> Unit,
+    onDrawerOpenChanged: (Boolean) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    var drawerOpen by remember { mutableStateOf(false) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     val player = remember {
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
@@ -96,16 +147,44 @@ fun VideoPlayerScreen(
         val dataSourceFactory = DefaultDataSource.Factory(context, httpDataSourceFactory)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
 
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                15_000,
+                120_000,
+                1_000,
+                2_000
+            )
+            .setBackBuffer(30_000, true)
+            .build()
+
+        val renderersFactory = DefaultRenderersFactory(context)
+            .setEnableDecoderFallback(true)
+
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
+            .setLoadControl(loadControl)
+            .setRenderersFactory(renderersFactory)
             .build()
             .apply {
                 playWhenReady = true
+                setWakeMode(C.WAKE_MODE_NETWORK)
             }
     }
 
     var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
     var currentIndex by remember { mutableIntStateOf(0) }
+    var selectedGroup by remember { mutableStateOf("全部") }
+
+    DisposableEffect(Unit) {
+        setDrawerOpenController { drawerOpen = it }
+        onDispose {
+            setDrawerOpenController(null)
+        }
+    }
+
+    LaunchedEffect(drawerOpen) {
+        onDrawerOpenChanged(drawerOpen)
+    }
 
     DisposableEffect(url) {
         player.setMediaItem(MediaItem.fromUri(url))
@@ -157,21 +236,48 @@ fun VideoPlayerScreen(
         currentIndex = findBestChannelIndex(parsed, url, title) ?: 0
     }
 
+    LaunchedEffect(channels, currentIndex) {
+        val ch = channels.getOrNull(currentIndex)
+        if (ch != null) {
+            selectedGroup = ch.group?.takeIf { it.isNotBlank() } ?: "未分组"
+        }
+    }
+
+    val groups = remember(channels) {
+        val set = LinkedHashSet<String>()
+        set.add("全部")
+        for (c in channels) {
+            set.add(c.group?.takeIf { it.isNotBlank() } ?: "未分组")
+        }
+        set.toList()
+    }
+
+    val filteredChannels = remember(channels, selectedGroup) {
+        if (selectedGroup == "全部") channels
+        else channels.filter { (it.group?.takeIf { g -> g.isNotBlank() } ?: "未分组") == selectedGroup }
+    }
+
+    fun playChannel(channel: Channel) {
+        val nextIndex = channels.indexOfFirst { it.url == channel.url }
+        if (nextIndex < 0) return
+        player.setMediaItem(MediaItem.fromUri(channel.url))
+        player.prepare()
+        player.play()
+        currentIndex = nextIndex
+        Prefs.setLastChannel(context, channel.url, channel.title)
+    }
+
     DisposableEffect(channels, currentIndex) {
         setOnChannelStep { direction ->
             if (channels.size < 2) return@setOnChannelStep false
+            if (drawerOpen) return@setOnChannelStep false
             val size = channels.size
             val nextIndex = (currentIndex + direction).let { raw ->
                 ((raw % size) + size) % size
             }
             val channel = channels[nextIndex]
 
-            player.setMediaItem(MediaItem.fromUri(channel.url))
-            player.prepare()
-            player.play()
-
-            currentIndex = nextIndex
-            Prefs.setLastChannel(context, channel.url, channel.title)
+            playChannel(channel)
             true
         }
 
@@ -181,9 +287,21 @@ fun VideoPlayerScreen(
     }
 
     DisposableEffect(Unit) {
+        var retryCount = 0
         val listener = object : androidx.media3.common.Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                Toast.makeText(context, "播放失败：${error.errorCodeName}", Toast.LENGTH_SHORT).show()
+                if (retryCount >= 3) return
+                retryCount += 1
+
+                val current = player.currentMediaItem ?: return
+                scope.launch {
+                    delay(800)
+                    player.stop()
+                    player.clearMediaItems()
+                    player.setMediaItem(current)
+                    player.prepare()
+                    player.play()
+                }
             }
         }
 
@@ -210,6 +328,17 @@ fun VideoPlayerScreen(
             update = {
                 it.player = player
             }
+        )
+
+        PlayerDrawer(
+            visible = drawerOpen,
+            groups = groups,
+            selectedGroup = selectedGroup,
+            channels = filteredChannels,
+            selectedChannelUrl = channels.getOrNull(currentIndex)?.url,
+            onSelectGroup = { selectedGroup = it },
+            onSelectChannel = { playChannel(it) },
+            onClose = { drawerOpen = false }
         )
 
         // Settings Button (Top-Right)
