@@ -48,6 +48,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
 import androidx.tv.material3.darkColorScheme
 import androidx.compose.ui.graphics.Color as ComposeColor
+import android.util.Log
 
 class PlayerActivity : ComponentActivity() {
     private var onChannelStep: ((Int) -> Boolean)? = null
@@ -174,6 +175,10 @@ fun VideoPlayerScreen(
     var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
     var currentIndex by remember { mutableIntStateOf(0) }
     var selectedGroup by remember { mutableStateOf("全部") }
+    var epgData by remember { mutableStateOf<EpgData?>(null) }
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+
+    val epgLoadTag = remember { "EPG" }
 
     DisposableEffect(Unit) {
         setDrawerOpenController { drawerOpen = it }
@@ -240,6 +245,39 @@ fun VideoPlayerScreen(
         val ch = channels.getOrNull(currentIndex)
         if (ch != null) {
             selectedGroup = ch.group?.takeIf { it.isNotBlank() } ?: "未分组"
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            nowMillis = System.currentTimeMillis()
+            delay(30_000)
+        }
+    }
+
+    LaunchedEffect(channels) {
+        val epgSource = Prefs.getEpgSource(context)
+        if (channels.isEmpty() || epgSource.isBlank()) {
+            epgData = null
+            return@LaunchedEffect
+        }
+        val loaded = EpgRepository.load(context, epgSource)
+        epgData = loaded
+        if (loaded != null) {
+            val matched = channels.count { loaded.resolveChannelId(it) != null }
+            Log.i(epgLoadTag, "loaded. programs=${loaded.programsByChannelId.size}, matched=$matched/${channels.size}")
+        } else {
+            Log.w(epgLoadTag, "load failed or parsed empty")
+        }
+    }
+
+    val nowProgramTitleByUrl = remember(epgData, nowMillis, channels) {
+        val data = epgData ?: return@remember emptyMap()
+        buildMap {
+            for (ch in channels) {
+                val t = data.nowProgramTitle(ch, nowMillis)
+                if (!t.isNullOrBlank()) put(ch.url, t)
+            }
         }
     }
 
@@ -336,6 +374,7 @@ fun VideoPlayerScreen(
             selectedGroup = selectedGroup,
             channels = filteredChannels,
             selectedChannelUrl = channels.getOrNull(currentIndex)?.url,
+            nowProgramTitleByChannelUrl = nowProgramTitleByUrl,
             onSelectGroup = { selectedGroup = it },
             onSelectChannel = { playChannel(it) },
             onClose = { drawerOpen = false }

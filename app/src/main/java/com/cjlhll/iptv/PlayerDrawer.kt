@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -39,6 +40,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 
 enum class DrawerColumn {
     Groups,
@@ -52,6 +54,7 @@ fun PlayerDrawer(
     selectedGroup: String,
     channels: List<Channel>,
     selectedChannelUrl: String?,
+    nowProgramTitleByChannelUrl: Map<String, String> = emptyMap(),
     onSelectGroup: (String) -> Unit,
     onSelectChannel: (Channel) -> Unit,
     onClose: () -> Unit,
@@ -63,10 +66,54 @@ fun PlayerDrawer(
 
     val selectedChannelRequester = remember { FocusRequester() }
     var activeColumn by remember { mutableStateOf(DrawerColumn.Channels) }
+    var pendingFocusToChannels by remember { mutableStateOf(false) }
 
-    LaunchedEffect(visible, selectedChannelUrl) {
+    val channelListState = rememberLazyListState()
+
+    val focusTargetIndex = remember(channels, selectedChannelUrl) {
+        if (!selectedChannelUrl.isNullOrBlank()) {
+            val i = channels.indexOfFirst { it.url == selectedChannelUrl }
+            if (i >= 0) i else 0
+        } else {
+            0
+        }
+    }
+
+    val focusTargetUrl = remember(channels, focusTargetIndex) {
+        channels.getOrNull(focusTargetIndex)?.url
+    }
+
+    LaunchedEffect(visible) {
         if (visible) {
-            selectedChannelRequester.requestFocus()
+            pendingFocusToChannels = true
+        }
+    }
+
+    LaunchedEffect(pendingFocusToChannels, visible, focusTargetUrl, focusTargetIndex) {
+        if (!pendingFocusToChannels) return@LaunchedEffect
+        if (!visible) return@LaunchedEffect
+        if (focusTargetUrl == null) {
+            pendingFocusToChannels = false
+            return@LaunchedEffect
+        }
+
+        runCatching {
+            channelListState.scrollToItem(focusTargetIndex)
+        }
+
+        var focused = false
+        repeat(5) {
+            withFrameNanos { }
+            if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) {
+                focused = true
+                return@repeat
+            }
+        }
+
+        if (!focused) {
+            pendingFocusToChannels = false
+        } else {
+            pendingFocusToChannels = false
         }
     }
 
@@ -84,8 +131,8 @@ fun PlayerDrawer(
                     if (it.key == Key.Back) {
                         onClose()
                         true
-                    } else if (it.key == Key.DirectionRight && activeColumn == DrawerColumn.Channels) {
-                        onClose()
+                    } else if (it.key == Key.DirectionRight && activeColumn == DrawerColumn.Groups) {
+                        pendingFocusToChannels = true
                         true
                     } else {
                         false
@@ -133,13 +180,17 @@ fun PlayerDrawer(
                             .weight(1f)
                             .padding(16.dp),
                     ) {
-                        LazyColumn(modifier = Modifier.fillMaxSize()) {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxSize(),
+                            state = channelListState
+                        ) {
                             items(channels) { ch ->
                                 val selected = ch.url == selectedChannelUrl
                                 DrawerChannelItem(
                                     channel = ch,
+                                    nowProgramTitle = nowProgramTitleByChannelUrl[ch.url],
                                     selected = selected,
-                                    focusRequester = if (selected) selectedChannelRequester else null,
+                                    focusRequester = if (ch.url == focusTargetUrl) selectedChannelRequester else null,
                                     onFocused = { activeColumn = DrawerColumn.Channels },
                                     onClick = { onSelectChannel(ch) }
                                 )
@@ -209,6 +260,7 @@ private fun DrawerGroupItem(
 @Composable
 private fun DrawerChannelItem(
     channel: Channel,
+    nowProgramTitle: String?,
     selected: Boolean,
     focusRequester: FocusRequester?,
     onFocused: () -> Unit,
@@ -242,12 +294,31 @@ private fun DrawerChannelItem(
             modifier = Modifier.size(width = 64.dp, height = 40.dp)
         )
         Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = channel.title,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
-        )
+        Column(modifier = Modifier.weight(1f, fill = true)) {
+            Text(
+                text = channel.title,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            if (!nowProgramTitle.isNullOrBlank()) {
+                Text(
+                    text = nowProgramTitle,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f)
+                )
+            } else {
+                Text(
+                    text = "暂无节目",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+                )
+            }
+        }
     }
 }
