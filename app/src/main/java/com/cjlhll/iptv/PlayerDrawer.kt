@@ -261,7 +261,9 @@ fun PlayerDrawer(
 
     val programsBySelectedDate = remember(fullPrograms, selectedEpgDate, zone) {
         val d = selectedEpgDate ?: return@remember emptyList()
-        fullPrograms.filter { millisToLocalDate(it.startMillis, zone) == d }
+        val dayStart = d.atStartOfDay(zone).toInstant().toEpochMilli()
+        val dayEnd = d.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        fullPrograms.filter { it.startMillis < dayEnd && it.endMillis > dayStart }
     }
 
     val programWindow = remember(programsBySelectedDate, nowMillis, selectedEpgDate, todayDate) {

@@ -12,28 +12,47 @@ import java.util.zip.GZIPInputStream
 object EpgRepository {
     private const val TAG = "EPG"
 
-    suspend fun load(context: Context, epgSourceUrl: String): EpgData? {
+    suspend fun load(context: Context, epgSourceUrl: String, forceRefresh: Boolean = false): EpgData? {
         if (epgSourceUrl.isBlank()) return null
 
         return withContext(Dispatchers.IO) {
             val cacheFileName = EpgCache.fileNameForSource(epgSourceUrl)
-            val cachedBytes = EpgCache.readBytes(context, cacheFileName)
 
-            if (cachedBytes != null) {
-                val parsed = parseBytes(cachedBytes)
-                if (parsed != null) return@withContext parsed
+            if (!forceRefresh) {
+                val cachedBytes = EpgCache.readBytes(context, cacheFileName)
+                if (cachedBytes != null) {
+                    val parsed = parseBytes(cachedBytes)
+                    if (parsed != null) return@withContext parsed
+                }
             }
 
             val client = OkHttpClient()
             val request = Request.Builder().url(epgSourceUrl).build()
 
-            val downloaded = client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                response.body?.bytes()
-            } ?: return@withContext null
+            val downloaded = try {
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) null
+                    else response.body?.bytes()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "download failed: ${e.message}")
+                null
+            }
 
-            EpgCache.writeBytes(context, cacheFileName, downloaded)
-            parseBytes(downloaded)
+            if (downloaded != null) {
+                EpgCache.writeBytes(context, cacheFileName, downloaded)
+                return@withContext parseBytes(downloaded)
+            }
+
+            // If network failed and we were forcing refresh, fallback to cache
+            if (forceRefresh) {
+                val cachedBytes = EpgCache.readBytes(context, cacheFileName)
+                if (cachedBytes != null) {
+                    return@withContext parseBytes(cachedBytes)
+                }
+            }
+
+            null
         }
     }
 

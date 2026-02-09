@@ -268,50 +268,100 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(playlistFileName, url, title) {
         val liveSource = Prefs.getLiveSource(context)
-        val resolvedFileName = when {
+        val epgSource = Prefs.getEpgSource(context)
+        val isNetworkM3u = playlistFileName.isNullOrBlank() && liveSource.isNotBlank()
+
+        // 1. Initial Cache Load (M3U)
+        val cacheFileName = when {
             !playlistFileName.isNullOrBlank() -> playlistFileName
             liveSource.isNotBlank() -> PlaylistCache.fileNameForSource(liveSource)
             else -> null
         }
 
-        var content: String? = null
-
-        if (!resolvedFileName.isNullOrBlank()) {
-            content = withContext(Dispatchers.IO) {
-                PlaylistCache.read(context, resolvedFileName)
-            }
-        }
-
-        if (content == null && liveSource.isNotBlank()) {
-            content = withContext(Dispatchers.IO) {
-                val client = OkHttpClient()
-                val request = Request.Builder().url(liveSource).build()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use null
-                    response.body?.string()
-                }
-            }
-
+        if (!cacheFileName.isNullOrBlank()) {
+            val content = withContext(Dispatchers.IO) { PlaylistCache.read(context, cacheFileName) }
             if (content != null) {
-                val fileNameToSave = resolvedFileName ?: PlaylistCache.fileNameForSource(liveSource)
-                withContext(Dispatchers.IO) {
-                    PlaylistCache.write(context, fileNameToSave, content)
+                val (parsed, bestIndex) = withContext(Dispatchers.Default) {
+                    val parsedChannels = M3uParser.parse(content)
+                    val idx = if (parsedChannels.isEmpty()) 0 else (findBestChannelIndex(parsedChannels, url, title) ?: 0)
+                    parsedChannels to idx
                 }
-                Prefs.setPlaylistFileName(context, fileNameToSave)
+                if (parsed.isNotEmpty()) {
+                    channels = parsed
+                    currentIndex = bestIndex
+                }
             }
         }
 
-        if (content == null) return@LaunchedEffect
-
-        val (parsed, bestIndex) = withContext(Dispatchers.Default) {
-            val parsedChannels = M3uParser.parse(content)
-            val idx = if (parsedChannels.isEmpty()) 0 else (findBestChannelIndex(parsedChannels, url, title) ?: 0)
-            parsedChannels to idx
+        // 2. Initial Cache Load (EPG)
+        if (epgSource.isNotBlank()) {
+            val cachedEpg = EpgRepository.load(context, epgSource, forceRefresh = false)
+            if (cachedEpg != null) {
+                epgData = cachedEpg
+                val currentChannels = channels
+                val matched = withContext(Dispatchers.Default) {
+                    currentChannels.count { cachedEpg.resolveChannelId(it) != null }
+                }
+                Log.i(epgLoadTag, "cache loaded. programs=${cachedEpg.programsByChannelId.size}, matched=$matched/${currentChannels.size}")
+            }
         }
 
-        if (parsed.isEmpty()) return@LaunchedEffect
-        channels = parsed
-        currentIndex = bestIndex
+        // 3. Loop for Network Updates
+        while (true) {
+            // Update M3U
+            if (isNetworkM3u) {
+                val content = withContext(Dispatchers.IO) {
+                    val client = OkHttpClient()
+                    val request = Request.Builder().url(liveSource).build()
+                    try {
+                        client.newCall(request).execute().use { response ->
+                            if (response.isSuccessful) response.body?.string() else null
+                        }
+                    } catch (e: Exception) { null }
+                }
+
+                if (content != null) {
+                    val fileNameToSave = PlaylistCache.fileNameForSource(liveSource)
+                    withContext(Dispatchers.IO) {
+                        PlaylistCache.write(context, fileNameToSave, content)
+                    }
+                    Prefs.setPlaylistFileName(context, fileNameToSave)
+
+                    val parsed = withContext(Dispatchers.Default) { M3uParser.parse(content) }
+
+                    if (parsed.isNotEmpty()) {
+                        val currentUrl = channels.getOrNull(currentIndex)?.url
+                        val newIndex = if (currentUrl != null) {
+                            parsed.indexOfFirst { it.url == currentUrl }.takeIf { it >= 0 }
+                        } else null
+
+                        channels = parsed
+                        if (newIndex != null) {
+                            currentIndex = newIndex
+                        } else {
+                            currentIndex = currentIndex.coerceIn(0, parsed.lastIndex)
+                        }
+                    }
+                }
+            }
+
+            // Update EPG
+            if (epgSource.isNotBlank()) {
+                val newEpg = EpgRepository.load(context, epgSource, forceRefresh = true)
+                if (newEpg != null) {
+                    epgData = newEpg
+                    val currentChannels = channels
+                    val matched = withContext(Dispatchers.Default) {
+                        currentChannels.count { newEpg.resolveChannelId(it) != null }
+                    }
+                    Log.i(epgLoadTag, "network refreshed. programs=${newEpg.programsByChannelId.size}, matched=$matched/${currentChannels.size}")
+                }
+            }
+
+            if (!isNetworkM3u && epgSource.isBlank()) break
+
+            delay(30 * 60 * 1000L)
+        }
     }
 
     // LaunchedEffect(channels, currentIndex) {
@@ -328,23 +378,7 @@ fun VideoPlayerScreen(
         }
     }
 
-    LaunchedEffect(channels) {
-        val epgSource = Prefs.getEpgSource(context)
-        if (channels.isEmpty() || epgSource.isBlank()) {
-            epgData = null
-            return@LaunchedEffect
-        }
-        val loaded = EpgRepository.load(context, epgSource)
-        epgData = loaded
-        if (loaded != null) {
-            val matched = withContext(Dispatchers.Default) {
-                channels.count { loaded.resolveChannelId(it) != null }
-            }
-            Log.i(epgLoadTag, "loaded. programs=${loaded.programsByChannelId.size}, matched=$matched/${channels.size}")
-        } else {
-            Log.w(epgLoadTag, "load failed or parsed empty")
-        }
-    }
+
 
     val groups = remember(channels) {
         val set = LinkedHashSet<String>()
