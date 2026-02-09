@@ -504,6 +504,15 @@ fun VideoPlayerScreen(
             nowMillis = nowMillis,
             onSelectGroup = { selectedGroup = it },
             onSelectChannel = { playChannel(it) },
+            onPlayProgram = { url ->
+                Log.d("PlayerActivity", "onPlayProgram called with url: $url")
+                player.stop()
+                player.clearMediaItems()
+                player.setMediaItem(MediaItem.fromUri(url))
+                player.prepare()
+                player.play()
+                drawerOpen = false
+            },
             onClose = { drawerOpen = false }
         )
 

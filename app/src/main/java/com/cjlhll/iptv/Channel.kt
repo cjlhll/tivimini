@@ -6,5 +6,7 @@ data class Channel(
     val group: String? = null,
     val logoUrl: String? = null,
     val tvgId: String? = null,
-    val tvgName: String? = null
+    val tvgName: String? = null,
+    val catchupMode: String? = null,
+    val catchupSource: String? = null
 )

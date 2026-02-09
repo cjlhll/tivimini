@@ -1,5 +1,7 @@
 package com.cjlhll.iptv
 
+import android.util.Log
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -47,6 +49,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalContext
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import androidx.compose.foundation.lazy.LazyColumn
@@ -86,9 +89,11 @@ fun PlayerDrawer(
     nowMillis: Long = 0L,
     onSelectGroup: (String) -> Unit,
     onSelectChannel: (Channel) -> Unit,
+    onPlayProgram: (String) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val container = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
     val scrim = Color.Transparent
     val shape = RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp)
@@ -546,6 +551,35 @@ fun PlayerDrawer(
                                             onFocused = {
                                                 activeColumn = DrawerColumn.Programs
                                                 showDates = true
+                                            },
+                                            onClick = {
+                                                Log.d("PlayerDrawer", "Program clicked: ${p.title}, state=$state")
+                                                if (state == ProgramTimeState.Past) {
+                                                    val ch = epgDataChannel
+                                                    Log.d("PlayerDrawer", "Checking channel for catchup: ${ch?.title}, mode=${ch?.catchupMode}, source=${ch?.catchupSource}")
+                                                    
+                                                    if (ch != null && ch.catchupMode != null) {
+                                                        val url = CatchupHelper.buildCatchupUrl(
+                                                            liveUrl = ch.url,
+                                                            modeRaw = ch.catchupMode,
+                                                            sourceTemplate = ch.catchupSource,
+                                                            start = Instant.ofEpochMilli(p.startMillis),
+                                                            stop = Instant.ofEpochMilli(p.endMillis)
+                                                        )
+                                                        Log.d("PlayerDrawer", "Generated catchup URL: $url")
+                                                        if (url != null) {
+                                                            onPlayProgram(url)
+                                                        } else {
+                                                            Toast.makeText(context, "回看地址生成失败", Toast.LENGTH_SHORT).show()
+                                                        }
+                                                    } else {
+                                                        Log.d("PlayerDrawer", "Catchup not supported for this channel or mode is null")
+                                                        Toast.makeText(context, "该频道不支持回看", Toast.LENGTH_SHORT).show()
+                                                    }
+                                                } else {
+                                                    Log.d("PlayerDrawer", "Program is not in the past, ignoring click")
+                                                    Toast.makeText(context, "只能回看历史节目", Toast.LENGTH_SHORT).show()
+                                                }
                                             }
                                         )
                                     }
@@ -783,7 +817,8 @@ private fun DrawerProgramItem(
     title: String,
     timeState: ProgramTimeState,
     focusRequester: FocusRequester?,
-    onFocused: () -> Unit
+    onFocused: () -> Unit,
+    onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
@@ -808,6 +843,7 @@ private fun DrawerProgramItem(
                 focused = it.isFocused
             }
             .focusable()
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
