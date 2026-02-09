@@ -9,6 +9,9 @@ import android.view.WindowManager
 import android.app.Activity
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.Composable
@@ -118,6 +121,15 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    private fun calculateSeekStep(repeatCount: Int): Long {
+        return when {
+            repeatCount == 0 -> 10_000L
+            repeatCount < 15 -> 30_000L
+            repeatCount < 40 -> 60_000L
+            else -> 300_000L
+        }
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
@@ -131,7 +143,8 @@ class PlayerActivity : ComponentActivity() {
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
                     if (!isDrawerOpen && !isSettingsDrawerOpen) {
                         if (isCatchupPlayback) {
-                            if (onCatchupSeek?.invoke(-30_000L) == true) return true
+                            val step = calculateSeekStep(event.repeatCount)
+                            if (onCatchupSeek?.invoke(-step) == true) return true
                         } else {
                             setDrawerOpen?.invoke(true)
                             return true
@@ -142,7 +155,8 @@ class PlayerActivity : ComponentActivity() {
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
                     if (!isDrawerOpen && !isSettingsDrawerOpen) {
                         if (isCatchupPlayback) {
-                            if (onCatchupSeek?.invoke(30_000L) == true) return true
+                            val step = calculateSeekStep(event.repeatCount)
+                            if (onCatchupSeek?.invoke(step) == true) return true
                         } else {
                             setSettingsDrawerOpen?.invoke(true)
                             return true
@@ -307,7 +321,7 @@ fun VideoPlayerScreen(
         onSettingsDrawerOpenChanged(settingsDrawerOpen)
     }
 
-    LaunchedEffect(infoBannerOpen) {
+    LaunchedEffect(infoBannerOpen, currentIndex) {
         onInfoBannerOpenChanged(infoBannerOpen)
         if (infoBannerOpen) {
             delay(5000)
@@ -559,6 +573,7 @@ fun VideoPlayerScreen(
             val target = (player.currentPosition + deltaMs).coerceIn(0L, total)
             player.seekTo(target)
             catchupSeekPingAt = System.currentTimeMillis()
+            catchupPositionMs = target
             true
         }
         setOnReturnToLive {
@@ -591,6 +606,7 @@ fun VideoPlayerScreen(
             val channel = channels[nextIndex]
 
             playChannel(channel)
+            infoBannerOpen = true
             true
         }
 
@@ -707,29 +723,41 @@ fun VideoPlayerScreen(
         )
 
         val req = catchupRequest
-        Column(
+        val bottomOverlayVisible = infoBannerOpen || (req != null && isCatchupProgressVisible)
+
+        AnimatedVisibility(
+            visible = bottomOverlayVisible,
+            enter = slideInVertically(initialOffsetY = { it }),
+            exit = slideOutVertically(targetOffsetY = { it }),
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth(),
-            verticalArrangement = Arrangement.Bottom
+                .fillMaxWidth()
         ) {
-            if (req != null && isCatchupProgressVisible) {
-                CatchupProgressBar(
-                    startMillis = req.startMillis,
-                    endMillis = req.endMillis,
-                    positionMs = catchupPositionMs,
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.Bottom
+            ) {
+                if (req != null && isCatchupProgressVisible) {
+                    CatchupProgressBar(
+                        startMillis = req.startMillis,
+                        endMillis = req.endMillis,
+                        positionMs = catchupPositionMs,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+
+                ChannelInfoBanner(
+                    visible = infoBannerOpen,
+                    channel = channels.getOrNull(currentIndex),
+                    programTitle = nowProgramByUrl[channels.getOrNull(currentIndex)?.url]?.title,
+                    programProgress = nowProgramByUrl[channels.getOrNull(currentIndex)?.url]?.progress,
+                    channelNumber = currentIndex + 1,
+                    videoFormat = videoFormat,
+                    roundedTopCorners = (req == null),
+                    animate = false,
                     modifier = Modifier.fillMaxWidth()
                 )
             }
-
-            ChannelInfoBanner(
-                visible = infoBannerOpen,
-                channel = channels.getOrNull(currentIndex),
-                programTitle = nowProgramByUrl[channels.getOrNull(currentIndex)?.url]?.title,
-                videoFormat = videoFormat,
-                roundedTopCorners = (req == null),
-                modifier = Modifier.fillMaxWidth()
-            )
         }
     }
 }

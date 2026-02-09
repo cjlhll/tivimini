@@ -177,6 +177,16 @@ fun PlayerDrawer(
         }
     }
 
+    LaunchedEffect(visible, selectedGroup, channels) {
+        if (!visible) return@LaunchedEffect
+        if (channels.isEmpty()) return@LaunchedEffect
+
+        withFrameNanos { }
+        runCatching {
+            channelListState.scrollToItem(0)
+        }
+    }
+
     LaunchedEffect(pendingFocusToGroups, visible, groupFocusTargetName, groupFocusTargetIndex) {
         if (!pendingFocusToGroups) return@LaunchedEffect
         if (!visible) return@LaunchedEffect
@@ -267,6 +277,15 @@ fun PlayerDrawer(
     }
 
     var selectedEpgDate by remember { mutableStateOf<LocalDate?>(null) }
+
+    LaunchedEffect(visible) {
+        if (!visible) selectedEpgDate = null
+    }
+
+    LaunchedEffect(focusedChannelUrl) {
+        selectedEpgDate = null
+    }
+
     LaunchedEffect(epgDates, todayDate, focusedChannelUrl, visible) {
         if (!visible) return@LaunchedEffect
         val selected = selectedEpgDate
@@ -795,7 +814,7 @@ private fun DrawerChannelItem(
                 }
             } else {
                 Text(
-                    text = "暂无节目",
+                    text = "无信息",
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     style = MaterialTheme.typography.bodySmall,
@@ -989,7 +1008,7 @@ private suspend fun centerLazyListItem(state: LazyListState, index: Int) {
         if (kotlin.math.abs(delta) <= 2) return true
         val desiredStartOffset = ((viewportSize / 2) - (item.size / 2)).coerceAtLeast(0)
         try {
-            state.scrollToItem(index, scrollOffset = desiredStartOffset)
+            state.scrollToItem(index, scrollOffset = -desiredStartOffset)
         } catch (_: Throwable) {
         }
         return true

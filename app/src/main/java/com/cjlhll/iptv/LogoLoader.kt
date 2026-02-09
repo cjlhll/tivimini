@@ -1,6 +1,10 @@
 package com.cjlhll.iptv
 
+import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.os.Build
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -8,6 +12,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,7 +24,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
@@ -25,28 +33,28 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
+import java.security.MessageDigest
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 object LogoLoader {
     private const val MAX_ENTRIES = 128
     private var client: OkHttpClient? = null
     private val semaphore = kotlinx.coroutines.sync.Semaphore(3) // 限制并发数，防止UI卡顿
 
-    private val cache = object : LinkedHashMap<String, androidx.compose.ui.graphics.ImageBitmap>(MAX_ENTRIES, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, androidx.compose.ui.graphics.ImageBitmap>): Boolean {
+    private val cache = object : LinkedHashMap<String, ImageBitmap>(MAX_ENTRIES, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>): Boolean {
             return size > MAX_ENTRIES
         }
     }
 
-    private fun getClient(context: android.content.Context): OkHttpClient {
+    private fun getClient(): OkHttpClient {
         if (client == null) {
             synchronized(this) {
                 if (client == null) {
-                    val cacheDir = java.io.File(context.cacheDir, "http_logos")
-                    if (!cacheDir.exists()) cacheDir.mkdirs()
-                    val cacheSize = 100L * 1024 * 1024 // 100MB
-                    val cache = okhttp3.Cache(cacheDir, cacheSize)
                     client = OkHttpClient.Builder()
-                        .cache(cache)
                         .build()
                 }
             }
@@ -54,25 +62,120 @@ object LogoLoader {
         return client!!
     }
 
-    private fun getCached(url: String): androidx.compose.ui.graphics.ImageBitmap? = synchronized(cache) { cache[url] }
+    private fun getCached(key: String): ImageBitmap? = synchronized(cache) { cache[key] }
 
-    private fun putCached(url: String, bitmap: androidx.compose.ui.graphics.ImageBitmap) {
-        synchronized(cache) { cache[url] = bitmap }
+    private fun putCached(key: String, bitmap: ImageBitmap) {
+        synchronized(cache) { cache[key] = bitmap }
     }
 
-    suspend fun load(context: android.content.Context, url: String): androidx.compose.ui.graphics.ImageBitmap? {
+    private fun cacheDir(context: Context): File {
+        val dir = File(context.cacheDir, "logo_cache_v1")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun cacheKey(url: String, targetWidthPx: Int, targetHeightPx: Int): String {
+        return "${sha256(url)}_${targetWidthPx}x${targetHeightPx}"
+    }
+
+    private fun cacheFile(context: Context, key: String): File {
+        return File(cacheDir(context), "$key.webp")
+    }
+
+    private fun sha256(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        val sb = StringBuilder(digest.size * 2)
+        for (b in digest) sb.append(String.format("%02x", b))
+        return sb.toString()
+    }
+
+    private fun computeSampleSize(outWidth: Int, outHeight: Int, targetWidthPx: Int, targetHeightPx: Int): Int {
+        if (outWidth <= 0 || outHeight <= 0) return 1
+        var sampleSize = 1
+        while ((outWidth / (sampleSize * 2)) >= targetWidthPx && (outHeight / (sampleSize * 2)) >= targetHeightPx) {
+            sampleSize *= 2
+        }
+        return max(1, sampleSize)
+    }
+
+    private fun scaleToBoxCenter(src: Bitmap, targetWidthPx: Int, targetHeightPx: Int): Bitmap {
+        val scale = min(targetWidthPx.toFloat() / src.width.toFloat(), targetHeightPx.toFloat() / src.height.toFloat())
+        val scaledWidth = max(1, (src.width * scale).roundToInt())
+        val scaledHeight = max(1, (src.height * scale).roundToInt())
+        val scaled = if (scaledWidth == src.width && scaledHeight == src.height) src else Bitmap.createScaledBitmap(src, scaledWidth, scaledHeight, true)
+
+        val output = Bitmap.createBitmap(targetWidthPx, targetHeightPx, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val left = ((targetWidthPx - scaled.width) / 2f)
+        val top = ((targetHeightPx - scaled.height) / 2f)
+        canvas.drawBitmap(scaled, left, top, null)
+
+        if (scaled !== src) scaled.recycle()
+        if (src.isRecycled.not() && src !== output) src.recycle()
+        return output
+    }
+
+    private fun writeBitmapToDisk(file: File, bitmap: Bitmap): Boolean {
+        val tmp = File(file.parentFile, file.name + ".tmp")
+        return try {
+            tmp.outputStream().use { out ->
+                val format = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else Bitmap.CompressFormat.WEBP
+                bitmap.compress(format, 80, out)
+            }
+            if (file.exists()) file.delete()
+            tmp.renameTo(file)
+        } catch (_: Exception) {
+            try { tmp.delete() } catch (_: Exception) {}
+            false
+        }
+    }
+
+    suspend fun load(context: Context, url: String, targetWidthPx: Int, targetHeightPx: Int): ImageBitmap? {
         if (url.isBlank()) return null
-        getCached(url)?.let { return it }
+        if (targetWidthPx <= 0 || targetHeightPx <= 0) return null
+
+        val key = cacheKey(url, targetWidthPx, targetHeightPx)
+        getCached(key)?.let { return it }
+
+        val diskFile = cacheFile(context, key)
+        if (diskFile.exists()) {
+            val bitmap = withContext(Dispatchers.Default) {
+                try {
+                    BitmapFactory.decodeFile(diskFile.absolutePath)
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            if (bitmap != null) {
+                val imageBitmap = bitmap.asImageBitmap()
+                putCached(key, imageBitmap)
+                return imageBitmap
+            }
+        }
 
         return semaphore.withPermit {
             // Double check
-            getCached(url)?.let { return@withPermit it }
+            getCached(key)?.let { return@withPermit it }
+            if (diskFile.exists()) {
+                val bitmap = withContext(Dispatchers.Default) {
+                    try {
+                        BitmapFactory.decodeFile(diskFile.absolutePath)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                if (bitmap != null) {
+                    val imageBitmap = bitmap.asImageBitmap()
+                    putCached(key, imageBitmap)
+                    return@withPermit imageBitmap
+                }
+            }
 
             try {
                 val bytes = withContext(Dispatchers.IO) {
                     val request = Request.Builder().url(url).build()
                     try {
-                        getClient(context).newCall(request).execute().use { response ->
+                        getClient().newCall(request).execute().use { response ->
                             if (!response.isSuccessful) return@use null
                             response.body?.bytes()
                         }
@@ -83,35 +186,35 @@ object LogoLoader {
 
                 val bitmap = withContext(Dispatchers.Default) {
                     try {
-                        // 尝试先读取尺寸，避免加载过大图片
                         val options = BitmapFactory.Options()
                         options.inJustDecodeBounds = true
                         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-                        
-                        // 计算缩放比例，目标高度大概 50dp (approx 100-150px)
-                        // 假设屏幕密度 2.0-3.0
-                        val targetHeight = 100
-                        var sampleSize = 1
-                        if (options.outHeight > targetHeight) {
-                            sampleSize = options.outHeight / targetHeight
-                        }
-                        
                         val decodeOptions = BitmapFactory.Options()
-                        decodeOptions.inSampleSize = sampleSize
-                        
-                        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+                        decodeOptions.inSampleSize = computeSampleSize(options.outWidth, options.outHeight, targetWidthPx, targetHeightPx)
+                        decodeOptions.inPreferredConfig = Bitmap.Config.ARGB_8888
+
+                        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+                        if (decoded == null) null else scaleToBoxCenter(decoded, targetWidthPx, targetHeightPx)
                     } catch (e: Exception) {
                         null
                     }
                 } ?: return@withPermit null
 
+                withContext(Dispatchers.IO) {
+                    writeBitmapToDisk(diskFile, bitmap)
+                }
+
                 val imageBitmap = bitmap.asImageBitmap()
-                putCached(url, imageBitmap)
+                putCached(key, imageBitmap)
                 imageBitmap
             } catch (e: Exception) {
                 null
             }
         }
+    }
+
+    suspend fun load(context: Context, url: String): ImageBitmap? {
+        return load(context, url, 160, 100)
     }
 }
 
@@ -121,24 +224,17 @@ fun ChannelLogo(
     fallbackTitle: String,
     modifier: Modifier = Modifier
 ) {
-    var loaded by remember(logoUrl) { mutableStateOf<androidx.compose.ui.graphics.ImageBitmap?>(null) }
-    val context = androidx.compose.ui.platform.LocalContext.current
+    var loaded by remember(logoUrl) { mutableStateOf<ImageBitmap?>(null) }
+    var sizePx by remember { mutableStateOf(IntSize.Zero) }
+    val context = LocalContext.current
 
-    LaunchedEffect(logoUrl) {
-        if (loaded != null && logoUrl != null && LogoLoader.load(context, logoUrl) == loaded) return@LaunchedEffect
-        
+    LaunchedEffect(logoUrl, sizePx) {
         loaded = null
         val url = logoUrl?.trim().orEmpty()
         if (url.isBlank()) return@LaunchedEffect
-        
-        // 稍微延迟一点点，让UI先渲染出来
+        if (sizePx.width <= 0 || sizePx.height <= 0) return@LaunchedEffect
         kotlinx.coroutines.delay(50)
-        
-        loaded = try {
-            LogoLoader.load(context, url)
-        } catch (_: Exception) {
-            null
-        }
+        loaded = LogoLoader.load(context, url, sizePx.width, sizePx.height)
     }
 
     val shape = RoundedCornerShape(10.dp)
@@ -148,11 +244,14 @@ fun ChannelLogo(
         Image(
             bitmap = loaded!!,
             contentDescription = fallbackTitle,
-            modifier = modifier.clip(shape)
+            modifier = modifier
+                .onSizeChanged { sizePx = it }
+                .clip(shape)
         )
     } else {
         Box(
             modifier = modifier
+                .onSizeChanged { sizePx = it }
                 .clip(shape)
                 .background(bg),
             contentAlignment = Alignment.Center
