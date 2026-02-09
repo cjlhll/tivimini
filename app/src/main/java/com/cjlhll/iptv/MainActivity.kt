@@ -1,9 +1,13 @@
 package com.cjlhll.iptv
 
+import android.graphics.Bitmap
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -21,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.content.Intent
@@ -85,6 +91,7 @@ class MainActivity : ComponentActivity() {
 fun MainScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val mainHandler = remember { Handler(Looper.getMainLooper()) }
     
     var lastBackPressTime by remember { mutableStateOf(0L) }
     BackHandler {
@@ -104,6 +111,45 @@ fun MainScreen() {
     var liveSource by remember { mutableStateOf(savedLiveSource) }
     var epgSource by remember { mutableStateOf(savedEpgSource) }
     var isLoading by remember { mutableStateOf(false) }
+
+    var lanUrl by remember { mutableStateOf<String?>(null) }
+    var lanError by remember { mutableStateOf<String?>(null) }
+    var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    val onPush: (String, String) -> Unit = { live, epg ->
+        mainHandler.post {
+            if (live.isNotBlank()) liveSource = live
+            if (epg.isNotBlank()) epgSource = epg
+            Toast.makeText(context, "已从手机推送更新", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val server = SourceConfigLanServer(
+            appContext = context.applicationContext,
+            onPush = onPush,
+        )
+        try {
+            val info = server.start()
+            lanUrl = info.url
+            lanError = null
+        } catch (e: Exception) {
+            lanUrl = null
+            lanError = e.message ?: "局域网服务启动失败"
+        }
+        onDispose { server.stop() }
+    }
+
+    LaunchedEffect(lanUrl) {
+        val url = lanUrl
+        qrBitmap = if (url.isNullOrBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.Default) {
+                runCatching { QrCode.toBitmap(url, 640) }.getOrNull()
+            }
+        }
+    }
 
     fun loadAndPlay(url: String, save: Boolean) {
         if (url.isBlank()) {
@@ -179,75 +225,130 @@ fun MainScreen() {
     // Auto-play removed as SplashActivity handles routing
     // LaunchedEffect(Unit) { ... }
 
-    Row(
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .padding(48.dp),
-        horizontalArrangement = Arrangement.Center,
-        verticalAlignment = Alignment.CenterVertically
+            .padding(48.dp)
     ) {
-        // Left side: QR Code Placeholder
-        Box(
-            modifier = Modifier
-                .fillMaxHeight(0.6f)
-                .aspectRatio(1f)
-                .border(2.dp, Color.Gray, RoundedCornerShape(16.dp))
-                .padding(16.dp),
-            contentAlignment = Alignment.Center
+        Text(
+            text = "源配置",
+            style = MaterialTheme.typography.headlineMedium,
+            modifier = Modifier.align(Alignment.TopStart)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "二维码",
-                style = MaterialTheme.typography.displayMedium,
-                textAlign = TextAlign.Center
-            )
-        }
-
-        Spacer(modifier = Modifier.width(48.dp))
-
-        // Right side: Inputs and Button
-        Column(
-            modifier = Modifier
-                .weight(1f),
-            verticalArrangement = Arrangement.spacedBy(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            val textFieldColors = TextFieldDefaults.colors(
-                focusedContainerColor = Color(0xFF303030),
-                unfocusedContainerColor = Color(0xFF303030),
-                focusedTextColor = Color.White,
-                unfocusedTextColor = Color.White,
-                focusedLabelColor = Color.LightGray,
-                unfocusedLabelColor = Color.Gray,
-                cursorColor = Color.White
-            )
-
-            TextField(
-                value = liveSource,
-                onValueChange = { liveSource = it },
-                label = { Text("直播源地址") },
-                modifier = Modifier.fillMaxWidth(),
-                colors = textFieldColors,
-                enabled = !isLoading
-            )
-
-            TextField(
-                value = epgSource,
-                onValueChange = { epgSource = it },
-                label = { Text("EPG地址") },
-                modifier = Modifier.fillMaxWidth(),
-                colors = textFieldColors,
-                enabled = !isLoading
-            )
-
-            Button(
-                onClick = { loadAndPlay(liveSource, true) },
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-                enabled = !isLoading
+                    .fillMaxHeight(0.6f)
+                    .aspectRatio(1f)
+                    .padding(16.dp),
+                contentAlignment = Alignment.Center
             ) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(if (isLoading) "加载中..." else "保存并播放")
+                when {
+                    lanError != null -> {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "局域网服务启动失败",
+                                style = MaterialTheme.typography.titleMedium,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = lanError ?: "",
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+
+                    qrBitmap != null && !lanUrl.isNullOrBlank() -> {
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(0.85f)
+                                    .aspectRatio(1f)
+                                    .background(Color.White, RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Image(
+                                    bitmap = qrBitmap!!.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Text(
+                                text = lanUrl!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
+
+                    else -> {
+                        Text(
+                            text = "正在生成二维码",
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.width(48.dp))
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                val textFieldColors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color(0xFF303030),
+                    unfocusedContainerColor = Color(0xFF303030),
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedLabelColor = Color.LightGray,
+                    unfocusedLabelColor = Color.Gray,
+                    cursorColor = Color.White
+                )
+
+                TextField(
+                    value = liveSource,
+                    onValueChange = { liveSource = it },
+                    label = { Text("直播源地址") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = textFieldColors,
+                    enabled = !isLoading
+                )
+
+                TextField(
+                    value = epgSource,
+                    onValueChange = { epgSource = it },
+                    label = { Text("EPG地址") },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = textFieldColors,
+                    enabled = !isLoading
+                )
+
+                Button(
+                    onClick = { loadAndPlay(liveSource, true) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp),
+                    enabled = !isLoading
+                ) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(if (isLoading) "加载中..." else "保存并播放")
+                    }
                 }
             }
         }
