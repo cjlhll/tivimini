@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.Image
@@ -38,6 +39,8 @@ import java.security.MessageDigest
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+import androidx.compose.ui.unit.Dp
 
 object LogoLoader {
     private const val MAX_ENTRIES = 128
@@ -63,6 +66,12 @@ object LogoLoader {
     }
 
     private fun getCached(key: String): ImageBitmap? = synchronized(cache) { cache[key] }
+
+    fun getInMemory(url: String, targetWidthPx: Int, targetHeightPx: Int): ImageBitmap? {
+        if (url.isBlank()) return null
+        val key = cacheKey(url, targetWidthPx, targetHeightPx)
+        return getCached(key)
+    }
 
     private fun putCached(key: String, bitmap: ImageBitmap) {
         synchronized(cache) { cache[key] = bitmap }
@@ -222,18 +231,48 @@ object LogoLoader {
 fun ChannelLogo(
     logoUrl: String?,
     fallbackTitle: String,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    width: Dp? = null,
+    height: Dp? = null
 ) {
-    var loaded by remember(logoUrl) { mutableStateOf<ImageBitmap?>(null) }
-    var sizePx by remember { mutableStateOf(IntSize.Zero) }
     val context = LocalContext.current
+    val density = LocalDensity.current
 
-    LaunchedEffect(logoUrl, sizePx) {
-        loaded = null
-        val url = logoUrl?.trim().orEmpty()
-        if (url.isBlank()) return@LaunchedEffect
+    val targetSizePx = remember(width, height, density) {
+        if (width != null && height != null) {
+            with(density) { IntSize(width.roundToPx(), height.roundToPx()) }
+        } else {
+            IntSize.Zero
+        }
+    }
+
+    var sizePx by remember { mutableStateOf(targetSizePx) }
+    
+    val url = logoUrl?.trim().orEmpty()
+    val memoryCacheHit = remember(url, sizePx) {
+        if (url.isNotBlank() && sizePx.width > 0 && sizePx.height > 0) {
+            LogoLoader.getInMemory(url, sizePx.width, sizePx.height)
+        } else {
+            null
+        }
+    }
+    
+    var loaded by remember(url) { mutableStateOf(memoryCacheHit) }
+    
+    if (memoryCacheHit != null && loaded == null) {
+        loaded = memoryCacheHit
+    }
+
+    LaunchedEffect(url, sizePx) {
+        if (url.isBlank()) {
+            loaded = null
+            return@LaunchedEffect
+        }
         if (sizePx.width <= 0 || sizePx.height <= 0) return@LaunchedEffect
-        kotlinx.coroutines.delay(50)
+        
+        if (loaded != null) return@LaunchedEffect
+        
+        // Removed delay to ensure fast loading
         loaded = LogoLoader.load(context, url, sizePx.width, sizePx.height)
     }
 
@@ -245,13 +284,13 @@ fun ChannelLogo(
             bitmap = loaded!!,
             contentDescription = fallbackTitle,
             modifier = modifier
-                .onSizeChanged { sizePx = it }
+                .onSizeChanged { if (width == null || height == null) sizePx = it }
                 .clip(shape)
         )
     } else {
         Box(
             modifier = modifier
-                .onSizeChanged { sizePx = it }
+                .onSizeChanged { if (width == null || height == null) sizePx = it }
                 .clip(shape)
                 .background(bg),
             contentAlignment = Alignment.Center

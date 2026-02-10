@@ -58,6 +58,9 @@ import android.util.Log
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 
 class PlayerActivity : ComponentActivity() {
     private var onChannelStep: ((Int) -> Boolean)? = null
@@ -251,12 +254,33 @@ fun VideoPlayerScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    
+    var player by remember { mutableStateOf<ExoPlayer?>(null) }
+    
     var drawerOpen by remember { mutableStateOf(false) }
     var settingsDrawerOpen by remember { mutableStateOf(false) }
     var infoBannerOpen by remember { mutableStateOf(false) }
     var videoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
-    val player = remember {
+
+    var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
+    var currentIndex by remember { mutableIntStateOf(0) }
+    var selectedGroup by remember { mutableStateOf("全部") }
+    var epgData by remember { mutableStateOf<EpgData?>(null) }
+    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var nowProgramByUrl by remember { mutableStateOf<Map<String, NowProgramUi>>(emptyMap()) }
+    var catchupRequest by remember { mutableStateOf<CatchupPlayRequest?>(null) }
+    var catchupPositionMs by remember { mutableStateOf(0L) }
+    var isCatchupProgressVisible by remember { mutableStateOf(false) }
+    var catchupSeekPingAt by remember { mutableStateOf(0L) }
+
+    val epgLoadTag = remember { "EPG" }
+    val shouldRefreshEpg = remember { mutableStateOf(false) }
+
+    fun initializePlayer() {
+        if (player != null) return
+        
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("Mozilla/5.0 (Linux; Android) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
             .setAllowCrossProtocolRedirects(true)
@@ -277,7 +301,7 @@ fun VideoPlayerScreen(
         val renderersFactory = DefaultRenderersFactory(context)
             .setEnableDecoderFallback(true)
 
-        ExoPlayer.Builder(context)
+        val newPlayer = ExoPlayer.Builder(context)
             .setMediaSourceFactory(mediaSourceFactory)
             .setLoadControl(loadControl)
             .setRenderersFactory(renderersFactory)
@@ -286,21 +310,92 @@ fun VideoPlayerScreen(
                 playWhenReady = true
                 setWakeMode(C.WAKE_MODE_NETWORK)
             }
+        
+        val req = catchupRequest
+        if (req != null) {
+             newPlayer.setMediaItem(MediaItem.fromUri(req.catchupUrl))
+        } else {
+             val currentChannelUrl = channels.getOrNull(currentIndex)?.url ?: url
+             newPlayer.setMediaItem(MediaItem.fromUri(currentChannelUrl))
+        }
+        
+        newPlayer.prepare()
+        newPlayer.play()
+        player = newPlayer
     }
 
-    var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
-    var currentIndex by remember { mutableIntStateOf(0) }
-    var selectedGroup by remember { mutableStateOf("全部") }
-    var epgData by remember { mutableStateOf<EpgData?>(null) }
-    var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
-    var nowProgramByUrl by remember { mutableStateOf<Map<String, NowProgramUi>>(emptyMap()) }
-    var catchupRequest by remember { mutableStateOf<CatchupPlayRequest?>(null) }
-    var catchupPositionMs by remember { mutableStateOf(0L) }
-    var isCatchupProgressVisible by remember { mutableStateOf(false) }
-    var catchupSeekPingAt by remember { mutableStateOf(0L) }
+    fun releasePlayer() {
+        player?.release()
+        player = null
+    }
 
-    val epgLoadTag = remember { "EPG" }
-    val shouldRefreshEpg = remember { mutableStateOf(false) }
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                initializePlayer()
+            } else if (event == Lifecycle.Event.ON_STOP) {
+                releasePlayer()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            releasePlayer()
+        }
+    }
+
+    DisposableEffect(player) {
+        val p = player
+        if (p != null) {
+            var retryCount = 0
+            val activity = context as? Activity
+
+            fun setScreenOn(keepOn: Boolean) {
+                val window = activity?.window ?: return
+                if (keepOn) {
+                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                } else {
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                }
+            }
+
+            val listener = object : androidx.media3.common.Player.Listener {
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    setScreenOn(isPlaying)
+                }
+
+                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                    videoFormat = p.videoFormat
+                }
+
+                override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                    videoFormat = p.videoFormat
+                }
+
+                override fun onPlayerError(error: PlaybackException) {
+                    if (retryCount >= 3) return
+                    retryCount += 1
+
+                    val current = p.currentMediaItem ?: return
+                    scope.launch {
+                        delay(800)
+                        p.setMediaItem(current)
+                        p.prepare()
+                        p.play()
+                    }
+                }
+            }
+
+            p.addListener(listener)
+            setScreenOn(p.isPlaying)
+            onDispose {
+                setScreenOn(false)
+                p.removeListener(listener)
+            }
+        } else {
+            onDispose { }
+        }
+    }
 
     DisposableEffect(Unit) {
         setDrawerOpenController { drawerOpen = it }
@@ -358,31 +453,24 @@ fun VideoPlayerScreen(
         }
     }
 
-    LaunchedEffect(catchupRequest) {
-        if (catchupRequest == null) {
+    LaunchedEffect(catchupRequest, player) {
+        val p = player
+        if (catchupRequest == null || p == null) {
             catchupPositionMs = 0L
             return@LaunchedEffect
         }
         while (true) {
             val req = catchupRequest ?: break
             val total = (req.endMillis - req.startMillis).coerceAtLeast(1L)
-            catchupPositionMs = player.currentPosition.coerceIn(0L, total)
+            catchupPositionMs = p.currentPosition.coerceIn(0L, total)
             delay(500)
         }
-    }
-
-    DisposableEffect(url) {
-        player.setMediaItem(MediaItem.fromUri(url))
-        player.prepare()
-        player.play()
-        onDispose { }
     }
 
     LaunchedEffect(playlistFileName, url, title) {
         val liveSource = Prefs.getLiveSource(context)
         val isNetworkM3u = playlistFileName.isNullOrBlank() && liveSource.isNotBlank()
 
-        // 1. Initial Cache Load (M3U)
         val cacheFileName = when {
             !playlistFileName.isNullOrBlank() -> playlistFileName
             liveSource.isNotBlank() -> PlaylistCache.fileNameForSource(liveSource)
@@ -404,7 +492,6 @@ fun VideoPlayerScreen(
             }
         }
 
-        // 2. Loop for Network Updates (M3U Only)
         if (isNetworkM3u) {
             var lastM3uAttemptTime = 0L
             while (true) {
@@ -453,7 +540,6 @@ fun VideoPlayerScreen(
     LaunchedEffect(Unit) {
         val epgSource = Prefs.getEpgSource(context)
         if (epgSource.isNotBlank()) {
-            // 1. Initial Cache Load (EPG)
             val cachedEpg = EpgRepository.load(context, epgSource, forceRefresh = false)
             if (cachedEpg != null) {
                 epgData = cachedEpg
@@ -464,13 +550,10 @@ fun VideoPlayerScreen(
                 Log.i(epgLoadTag, "cache loaded. programs=${cachedEpg.programsByChannelId.size}, matched=$matched/${currentChannels.size}")
             }
 
-            // 2. Loop for Network Updates (EPG Only)
             var lastAttemptTime = 0L
             while (true) {
                 val now = System.currentTimeMillis()
                 
-                // Throttle retries: if we tried recently (within 5 mins) and failed, don't try again immediately
-                // unless it's a manual refresh
                 if (!shouldRefreshEpg.value && (now - lastAttemptTime < 5 * 60 * 1000L)) {
                     delay(10_000L)
                     continue
@@ -505,17 +588,10 @@ fun VideoPlayerScreen(
                     }
                     shouldRefreshEpg.value = false
                 }
-                delay(600_000L) // Check every 10 minutes
+                delay(600_000L)
             }
         }
     }
-
-    // LaunchedEffect(channels, currentIndex) {
-    //     val ch = channels.getOrNull(currentIndex)
-    //     if (ch != null) {
-    //         selectedGroup = ch.group?.takeIf { it.isNotBlank() } ?: "未分组"
-    //     }
-    // }
 
     LaunchedEffect(Unit) {
         while (true) {
@@ -523,8 +599,6 @@ fun VideoPlayerScreen(
             delay(30_000)
         }
     }
-
-
 
     val groups = remember(channels) {
         val set = LinkedHashSet<String>()
@@ -570,20 +644,25 @@ fun VideoPlayerScreen(
         val nextIndex = channels.indexOfFirst { it.url == channel.url }
         if (nextIndex < 0) return
         catchupRequest = null
-        player.setMediaItem(MediaItem.fromUri(channel.url))
-        player.prepare()
-        player.play()
+        
+        player?.let { p ->
+            p.setMediaItem(MediaItem.fromUri(channel.url))
+            p.prepare()
+            p.play()
+        }
+        
         currentIndex = nextIndex
         Prefs.setLastChannel(context, channel.url, channel.title)
     }
 
     DisposableEffect(player, channels, currentIndex, catchupRequest) {
         setOnCatchupSeek { deltaMs ->
+            val p = player ?: return@setOnCatchupSeek false
             val req = catchupRequest ?: return@setOnCatchupSeek false
-            if (!player.isCurrentMediaItemSeekable) return@setOnCatchupSeek false
+            if (!p.isCurrentMediaItemSeekable) return@setOnCatchupSeek false
             val total = (req.endMillis - req.startMillis).coerceAtLeast(1L)
-            val target = (player.currentPosition + deltaMs).coerceIn(0L, total)
-            player.seekTo(target)
+            val target = (p.currentPosition + deltaMs).coerceIn(0L, total)
+            p.seekTo(target)
             catchupSeekPingAt = System.currentTimeMillis()
             catchupPositionMs = target
             true
@@ -595,9 +674,11 @@ fun VideoPlayerScreen(
                 playChannel(channel)
             } else {
                 catchupRequest = null
-                player.setMediaItem(MediaItem.fromUri(req.liveUrl))
-                player.prepare()
-                player.play()
+                player?.let { p ->
+                    p.setMediaItem(MediaItem.fromUri(req.liveUrl))
+                    p.prepare()
+                    p.play()
+                }
             }
             true
         }
@@ -607,7 +688,7 @@ fun VideoPlayerScreen(
         }
     }
 
-    DisposableEffect(channels, currentIndex) {
+    DisposableEffect(channels, currentIndex, player) {
         setOnChannelStep { direction ->
             if (channels.size < 2) return@setOnChannelStep false
             if (drawerOpen || settingsDrawerOpen) return@setOnChannelStep false
@@ -627,75 +708,28 @@ fun VideoPlayerScreen(
         }
     }
 
-    DisposableEffect(Unit) {
-        var retryCount = 0
-        val activity = context as? Activity
-
-        fun setScreenOn(keepOn: Boolean) {
-            val window = activity?.window ?: return
-            if (keepOn) {
-                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            } else {
-                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
-        }
-
-        val listener = object : androidx.media3.common.Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
-                setScreenOn(isPlaying)
-            }
-
-            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                videoFormat = player.videoFormat
-            }
-
-            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-                videoFormat = player.videoFormat
-            }
-
-            override fun onPlayerError(error: PlaybackException) {
-                if (retryCount >= 3) return
-                retryCount += 1
-
-                val current = player.currentMediaItem ?: return
-                scope.launch {
-                    delay(800)
-                    player.setMediaItem(current)
-                    player.prepare()
-                    player.play()
-                }
-            }
-        }
-
-        player.addListener(listener)
-        setScreenOn(player.isPlaying)
-        onDispose {
-            setScreenOn(false)
-            player.removeListener(listener)
-            player.release()
-        }
-    }
-
     Box(modifier = Modifier.fillMaxSize()) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = {
-                PlayerView(it).apply {
-                    this.player = player
-                    useController = false
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                    setKeepContentOnPlayerReset(true)
-                    setShutterBackgroundColor(Color.TRANSPARENT)
-                    keepScreenOn = true
-                    isFocusable = false
-                    isFocusableInTouchMode = false
-                    descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        if (player != null) {
+            AndroidView(
+                modifier = Modifier.fillMaxSize(),
+                factory = {
+                    PlayerView(it).apply {
+                        this.player = player
+                        useController = false
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                        setKeepContentOnPlayerReset(true)
+                        setShutterBackgroundColor(Color.TRANSPARENT)
+                        keepScreenOn = true
+                        isFocusable = false
+                        isFocusableInTouchMode = false
+                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    }
+                },
+                update = {
+                    it.player = player
                 }
-            },
-            update = {
-                it.player = player
-            }
-        )
+            )
+        }
 
         PlayerDrawer(
             visible = drawerOpen,
@@ -711,9 +745,11 @@ fun VideoPlayerScreen(
             onPlayProgram = { req ->
                 Log.d("PlayerActivity", "onPlayProgram called with url: ${req.catchupUrl}")
                 catchupRequest = req
-                player.setMediaItem(MediaItem.fromUri(req.catchupUrl))
-                player.prepare()
-                player.play()
+                player?.let { p ->
+                    p.setMediaItem(MediaItem.fromUri(req.catchupUrl))
+                    p.prepare()
+                    p.play()
+                }
                 drawerOpen = false
             },
             onClose = { drawerOpen = false }
@@ -724,7 +760,6 @@ fun VideoPlayerScreen(
             onSourceConfigClick = {
                 val intent = Intent(context, MainActivity::class.java)
                 context.startActivity(intent)
-                // (context as? android.app.Activity)?.finish() // Keep PlayerActivity in back stack
             },
             onEpgSettingsClick = {
                 shouldRefreshEpg.value = true

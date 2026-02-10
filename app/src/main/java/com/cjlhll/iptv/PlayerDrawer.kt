@@ -170,18 +170,31 @@ fun PlayerDrawer(
         if (visible) {
             showGroups = false
             showDates = false
-            pendingFocusToChannels = true
+            // pendingFocusToChannels = true
             val targetUrl = selectedChannelUrl ?: channels.firstOrNull()?.url
             focusedChannelUrl = targetUrl
             stableFocusedChannelUrl = targetUrl
+
+            if (channels.isNotEmpty()) {
+                val index = if (targetUrl != null) {
+                    channels.indexOfFirst { it.url == targetUrl }.coerceAtLeast(0)
+                } else 0
+                channelListState.scrollToItem(index)
+
+                // Try to request focus without triggering the scroll logic in pendingFocusToChannels
+                repeat(5) {
+                    if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) {
+                        return@LaunchedEffect
+                    }
+                    withFrameNanos { }
+                }
+            }
         }
     }
 
-    LaunchedEffect(visible, selectedGroup, channels) {
-        if (!visible) return@LaunchedEffect
+    LaunchedEffect(selectedGroup, channels) {
         if (channels.isEmpty()) return@LaunchedEffect
 
-        withFrameNanos { }
         runCatching {
             channelListState.scrollToItem(0)
         }
@@ -784,7 +797,9 @@ private fun DrawerChannelItem(
         ChannelLogo(
             logoUrl = channel.logoUrl,
             fallbackTitle = channel.title,
-            modifier = Modifier.size(width = 64.dp, height = 40.dp)
+            modifier = Modifier.size(width = 64.dp, height = 40.dp),
+            width = 64.dp,
+            height = 40.dp
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f, fill = true)) {

@@ -48,7 +48,9 @@ fun ChannelInfoBanner(
                 ChannelLogo(
                     logoUrl = channel?.logoUrl,
                     fallbackTitle = channel?.title ?: "",
-                    modifier = Modifier.size(width = 80.dp, height = 50.dp)
+                    modifier = Modifier.size(width = 80.dp, height = 50.dp),
+                    width = 80.dp,
+                    height = 50.dp
                 )
 
                 Spacer(modifier = Modifier.width(20.dp))
