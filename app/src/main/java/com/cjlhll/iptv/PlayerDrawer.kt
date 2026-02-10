@@ -528,8 +528,8 @@ fun PlayerDrawer(
 
     val datesVisible = showDates && epgDates.isNotEmpty()
     val targetDrawerWidth = remember(showGroups, datesVisible) {
-        val groupsSection = if (showGroups) (150.dp + 32.dp + 1.dp) else 0.dp
-        val channelsSection = 300.dp + 32.dp
+        val groupsSection = if (showGroups) (150.dp + 1.dp) else 0.dp
+        val channelsSection = 300.dp
         val divider = 1.dp
         val programsSection = 300.dp + 32.dp + (if (datesVisible) (110.dp + 10.dp) else 0.dp)
         groupsSection + channelsSection + divider + programsSection
