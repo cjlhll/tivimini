@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -254,6 +255,7 @@ fun VideoPlayerScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val density = LocalDensity.current
     val lifecycleOwner = LocalLifecycleOwner.current
     
     var player by remember { mutableStateOf<ExoPlayer?>(null) }
@@ -274,6 +276,11 @@ fun VideoPlayerScreen(
     var catchupPositionMs by remember { mutableStateOf(0L) }
     var isCatchupProgressVisible by remember { mutableStateOf(false) }
     var catchupSeekPingAt by remember { mutableStateOf(0L) }
+
+    val drawerLogoWidthPx = remember(density) { with(density) { 64.dp.roundToPx() } }
+    val drawerLogoHeightPx = remember(density) { with(density) { 40.dp.roundToPx() } }
+    val bannerLogoWidthPx = remember(density) { with(density) { 80.dp.roundToPx() } }
+    val bannerLogoHeightPx = remember(density) { with(density) { 50.dp.roundToPx() } }
 
     val epgLoadTag = remember { "EPG" }
     val shouldRefreshEpg = remember { mutableStateOf(false) }
@@ -488,6 +495,14 @@ fun VideoPlayerScreen(
                 if (parsed.isNotEmpty()) {
                     channels = parsed
                     currentIndex = bestIndex
+
+                    val urls = buildPrefetchLogoUrls(parsed, bestIndex)
+                    scope.launch {
+                        LogoLoader.prefetch(context, urls, drawerLogoWidthPx, drawerLogoHeightPx)
+                    }
+                    scope.launch {
+                        LogoLoader.prefetch(context, urls, bannerLogoWidthPx, bannerLogoHeightPx)
+                    }
                 }
             }
         }
@@ -527,6 +542,15 @@ fun VideoPlayerScreen(
                                 currentIndex = newIndex
                             } else {
                                 currentIndex = currentIndex.coerceIn(0, parsed.lastIndex)
+                            }
+
+                            val idx = currentIndex
+                            val urls = buildPrefetchLogoUrls(parsed, idx)
+                            scope.launch {
+                                LogoLoader.prefetch(context, urls, drawerLogoWidthPx, drawerLogoHeightPx)
+                            }
+                            scope.launch {
+                                LogoLoader.prefetch(context, urls, bannerLogoWidthPx, bannerLogoHeightPx)
                             }
                         }
                     }
@@ -831,6 +855,34 @@ fun VideoPlayerScreen(
             }
         }
     }
+}
+
+private fun buildPrefetchLogoUrls(channels: List<Channel>, currentIndex: Int): List<String> {
+    if (channels.isEmpty()) return emptyList()
+
+    val out = ArrayList<String>(minOf(512, channels.size))
+    val seen = HashSet<String>(minOf(512, channels.size))
+
+    fun addAt(index: Int) {
+        val url = channels.getOrNull(index)?.logoUrl?.trim().orEmpty()
+        if (url.isNotBlank() && seen.add(url)) out.add(url)
+    }
+
+    addAt(currentIndex)
+    for (delta in 1..8) {
+        addAt(currentIndex - delta)
+        addAt(currentIndex + delta)
+    }
+
+    val head = minOf(80, channels.size)
+    for (i in 0 until head) addAt(i)
+
+    for (c in channels) {
+        val url = c.logoUrl?.trim().orEmpty()
+        if (url.isNotBlank() && seen.add(url)) out.add(url)
+    }
+
+    return out
 }
 
 private val catchupTimeFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm")

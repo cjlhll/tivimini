@@ -128,10 +128,10 @@ fun PlayerDrawer(
     var focusedChannelUrl by remember { mutableStateOf<String?>(null) }
     var stableFocusedChannelUrl by remember { mutableStateOf<String?>(null) }
 
-    val groupListState = rememberLazyListState()
-    val channelListState = rememberLazyListState()
-    val programListState = rememberLazyListState()
-    val dateListState = rememberLazyListState()
+    // val groupListState = rememberLazyListState()
+    // val channelListState = rememberLazyListState()
+    // val programListState = rememberLazyListState()
+    // val dateListState = rememberLazyListState()
 
     LaunchedEffect(focusedChannelUrl) {
         if (stableFocusedChannelUrl == null) {
@@ -166,22 +166,40 @@ fun PlayerDrawer(
         channels.getOrNull(focusTargetIndex)?.url
     }
 
+    val groupListState = remember(visible, groupFocusTargetIndex) {
+        LazyListState(firstVisibleItemIndex = if (visible) groupFocusTargetIndex else 0)
+    }
+
+    val initialScrollIndex = remember(channels, selectedChannelUrl) {
+        val url = selectedChannelUrl
+        if (!url.isNullOrBlank()) {
+            val i = channels.indexOfFirst { it.url == url }
+            if (i >= 0) i else 0
+        } else {
+            0
+        }
+    }
+
+    val channelListState = rememberLazyListState()
+
+    val programListState = remember(visible) { LazyListState() }
+    val dateListState = remember(visible) { LazyListState() }
+
     LaunchedEffect(visible) {
         if (visible) {
             showGroups = false
             showDates = false
+            activeColumn = DrawerColumn.Channels
             // pendingFocusToChannels = true
             val targetUrl = selectedChannelUrl ?: channels.firstOrNull()?.url
             focusedChannelUrl = targetUrl
             stableFocusedChannelUrl = targetUrl
 
             if (channels.isNotEmpty()) {
-                val index = if (targetUrl != null) {
-                    channels.indexOfFirst { it.url == targetUrl }.coerceAtLeast(0)
-                } else 0
-                channelListState.scrollToItem(index)
+                if (channelListState.firstVisibleItemIndex != initialScrollIndex) {
+                     channelListState.scrollToItem(initialScrollIndex)
+                }
 
-                // Try to request focus without triggering the scroll logic in pendingFocusToChannels
                 repeat(5) {
                     if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) {
                         return@LaunchedEffect
@@ -192,11 +210,12 @@ fun PlayerDrawer(
         }
     }
 
-    LaunchedEffect(selectedGroup, channels) {
+    LaunchedEffect(selectedGroup) {
         if (channels.isEmpty()) return@LaunchedEffect
-
-        runCatching {
-            channelListState.scrollToItem(0)
+        if (visible) {
+             runCatching {
+                channelListState.scrollToItem(0)
+            }
         }
     }
 
@@ -554,7 +573,7 @@ fun PlayerDrawer(
                                     },
                                     onClick = {
                                         focusedChannelUrl = ch.url
-                                        pendingFocusToChannels = true
+                                        // pendingFocusToChannels = true
                                         onSelectChannel(ch)
                                     }
                                 )

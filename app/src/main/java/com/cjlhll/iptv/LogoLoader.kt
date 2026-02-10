@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
@@ -46,6 +47,8 @@ object LogoLoader {
     private const val MAX_ENTRIES = 128
     private var client: OkHttpClient? = null
     private val semaphore = kotlinx.coroutines.sync.Semaphore(3) // 限制并发数，防止UI卡顿
+
+    private val inFlight = HashSet<String>()
 
     private val cache = object : LinkedHashMap<String, ImageBitmap>(MAX_ENTRIES, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ImageBitmap>): Boolean {
@@ -89,6 +92,19 @@ object LogoLoader {
 
     private fun cacheFile(context: Context, key: String): File {
         return File(cacheDir(context), "$key.webp")
+    }
+
+    private fun tryMarkInFlight(key: String): Boolean {
+        return synchronized(inFlight) {
+            if (inFlight.contains(key)) false else {
+                inFlight.add(key)
+                true
+            }
+        }
+    }
+
+    private fun unmarkInFlight(key: String) {
+        synchronized(inFlight) { inFlight.remove(key) }
     }
 
     private fun sha256(value: String): String {
@@ -225,6 +241,28 @@ object LogoLoader {
     suspend fun load(context: Context, url: String): ImageBitmap? {
         return load(context, url, 160, 100)
     }
+
+    suspend fun prefetch(context: Context, urls: List<String>, targetWidthPx: Int, targetHeightPx: Int) {
+        if (targetWidthPx <= 0 || targetHeightPx <= 0) return
+        if (urls.isEmpty()) return
+
+        withContext(Dispatchers.Default) {
+            for (raw in urls) {
+                val url = raw.trim()
+                if (url.isBlank()) continue
+                val key = cacheKey(url, targetWidthPx, targetHeightPx)
+                if (getCached(key) != null) continue
+                val diskFile = cacheFile(context, key)
+                if (diskFile.exists()) continue
+                if (!tryMarkInFlight(key)) continue
+                try {
+                    load(context, url, targetWidthPx, targetHeightPx)
+                } finally {
+                    unmarkInFlight(key)
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -258,6 +296,8 @@ fun ChannelLogo(
     }
     
     var loaded by remember(url) { mutableStateOf(memoryCacheHit) }
+
+    var showFallbackText by remember(url) { mutableStateOf(url.isBlank()) }
     
     if (memoryCacheHit != null && loaded == null) {
         loaded = memoryCacheHit
@@ -266,6 +306,7 @@ fun ChannelLogo(
     LaunchedEffect(url, sizePx) {
         if (url.isBlank()) {
             loaded = null
+            showFallbackText = true
             return@LaunchedEffect
         }
         if (sizePx.width <= 0 || sizePx.height <= 0) return@LaunchedEffect
@@ -274,6 +315,18 @@ fun ChannelLogo(
         
         // Removed delay to ensure fast loading
         loaded = LogoLoader.load(context, url, sizePx.width, sizePx.height)
+    }
+
+    LaunchedEffect(url, sizePx) {
+        if (url.isBlank()) {
+            showFallbackText = true
+            return@LaunchedEffect
+        }
+        showFallbackText = false
+        delay(600)
+        if (loaded == null && url.isNotBlank()) {
+            showFallbackText = true
+        }
     }
 
     val shape = RoundedCornerShape(10.dp)
@@ -295,15 +348,17 @@ fun ChannelLogo(
                 .background(bg),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = fallbackTitle.take(1),
-                maxLines = 1,
-                overflow = TextOverflow.Clip,
-                modifier = Modifier
-                    .padding(6.dp),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (showFallbackText) {
+                Text(
+                    text = fallbackTitle.take(1),
+                    maxLines = 1,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier
+                        .padding(6.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
