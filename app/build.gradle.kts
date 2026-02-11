@@ -12,8 +12,10 @@ android {
         applicationId = "com.cjlhll.iptv"
         minSdk = 24
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        val verName = project.findProperty("APP_VERSION_NAME") as? String ?: "1.0"
+        val verCode = (project.findProperty("APP_VERSION_CODE") as? String)?.toIntOrNull() ?: 1
+        versionCode = verCode
+        versionName = verName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
