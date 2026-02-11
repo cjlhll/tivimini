@@ -63,3 +63,10 @@
   - `M3uParser`、`XmlTvParser`：源解析
   - `EpgRepository`、`EpgCache`：EPG 数据与缓存
 
+## 预览
+
+| | | |
+|:---:|:---:|:---:|
+| <img src="./screenshot/Screenshot_20260211_090032.png" width="300" /> | <img src="./screenshot/Screenshot_20260211_090058.png" width="300" /> | <img src="./screenshot/Screenshot_20260211_090121.png" width="300" /> |
+| <img src="./screenshot/Screenshot_20260211_090131.png" width="300" /> | <img src="./screenshot/Screenshot_20260211_090143.png" width="300" /> | <img src="./screenshot/Screenshot_20260211_090200.png" width="300" /> |
+| <img src="./screenshot/Screenshot_20260211_090222.png" width="300" /> | <img src="./screenshot/Screenshot_20260211_090247.png" width="300" /> | <img src="./screenshot/Screenshot_20260211_090309.png" width="300" /> |
