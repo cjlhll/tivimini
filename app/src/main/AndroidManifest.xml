@@ -14,12 +14,12 @@
         android:roundIcon="@drawable/logo"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
-        android:theme="@style/Theme.Iptv">
+        android:theme="@style/Theme.TiviMini">
         <activity
             android:name=".SplashActivity"
             android:exported="true"
             android:screenOrientation="landscape"
-            android:theme="@style/Theme.Iptv">
+            android:theme="@style/Theme.TiviMini">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -31,7 +31,7 @@
             android:name=".MainActivity"
             android:exported="false"
             android:screenOrientation="landscape"
-            android:theme="@style/Theme.Iptv" />
+            android:theme="@style/Theme.TiviMini" />
         <activity
             android:name=".PlayerActivity"
             android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|smallestScreenSize|uiMode"

@@ -1,6 +1,6 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Theme.Iptv" parent="Theme.Material3.Dark.NoActionBar">
+    <style name="Theme.TiviMini" parent="Theme.Material3.Dark.NoActionBar">
         <!-- Customize your theme here. -->
         <item name="android:windowBackground">@android:color/background_dark</item>
     </style>
