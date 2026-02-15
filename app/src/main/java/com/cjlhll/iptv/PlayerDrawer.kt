@@ -223,49 +223,58 @@ fun PlayerDrawer(
     val dateListState = rememberLazyListState()
 
     LaunchedEffect(visible) {
-        if (visible) {
+        if (!visible) {
             showGroups = false
             showDates = false
             activeColumn = DrawerColumn.Channels
-            // pendingFocusToChannels = true
-            val targetUrl = selectedChannelUrl ?: channels.firstOrNull()?.url
-            focusedChannelUrl = targetUrl
-            stableFocusedChannelUrl = targetUrl
+            pendingFocusToGroups = false
+            pendingFocusToChannels = false
+            pendingFocusToPrograms = false
+            pendingFocusToDates = false
+            return@LaunchedEffect
+        }
 
-            if (channels.isNotEmpty()) {
-                val targetIndex = targetUrl?.let { channelIndexByUrl[it] } ?: 0
+        showGroups = false
+        showDates = false
+        activeColumn = DrawerColumn.Channels
+        // pendingFocusToChannels = true
+        val targetUrl = selectedChannelUrl ?: channels.firstOrNull()?.url
+        focusedChannelUrl = targetUrl
+        stableFocusedChannelUrl = targetUrl
 
-                runCatching {
-                    snapshotFlow { channelListState.layoutInfo.visibleItemsInfo.isNotEmpty() }
-                        .filter { it }
-                        .first()
+        if (channels.isNotEmpty()) {
+            val targetIndex = targetUrl?.let { channelIndexByUrl[it] } ?: 0
+
+            runCatching {
+                snapshotFlow { channelListState.layoutInfo.visibleItemsInfo.isNotEmpty() }
+                    .filter { it }
+                    .first()
+            }
+
+            val visibleItems = channelListState.layoutInfo.visibleItemsInfo
+            val selectedVisible = visibleItems.any { it.index == targetIndex }
+
+            if (selectedVisible) {
+                focusedChannelUrl = targetUrl
+                stableFocusedChannelUrl = targetUrl
+
+                withFrameNanos { }
+
+                repeat(2) {
+                    if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) return@LaunchedEffect
+                    withFrameNanos { }
                 }
+            } else {
+                val fallbackIndex = visibleItems.firstOrNull()?.index ?: channelListState.firstVisibleItemIndex
+                val fallbackUrl = channels.getOrNull(fallbackIndex)?.url
+                focusedChannelUrl = fallbackUrl
+                stableFocusedChannelUrl = fallbackUrl
 
-                val visibleItems = channelListState.layoutInfo.visibleItemsInfo
-                val selectedVisible = visibleItems.any { it.index == targetIndex }
+                withFrameNanos { }
 
-                if (selectedVisible) {
-                    focusedChannelUrl = targetUrl
-                    stableFocusedChannelUrl = targetUrl
-
+                repeat(2) {
+                    if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) return@LaunchedEffect
                     withFrameNanos { }
-
-                    repeat(2) {
-                        if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) return@LaunchedEffect
-                        withFrameNanos { }
-                    }
-                } else {
-                    val fallbackIndex = visibleItems.firstOrNull()?.index ?: channelListState.firstVisibleItemIndex
-                    val fallbackUrl = channels.getOrNull(fallbackIndex)?.url
-                    focusedChannelUrl = fallbackUrl
-                    stableFocusedChannelUrl = fallbackUrl
-
-                    withFrameNanos { }
-
-                    repeat(2) {
-                        if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) return@LaunchedEffect
-                        withFrameNanos { }
-                    }
                 }
             }
         }
@@ -545,10 +554,14 @@ fun PlayerDrawer(
     }
     val drawerWidth by animateDpAsState(
         targetValue = targetDrawerWidth,
-        animationSpec = spring(
-            dampingRatio = Spring.DampingRatioNoBouncy,
-            stiffness = Spring.StiffnessHigh
-        ),
+        animationSpec = if (visible) {
+            spring(
+                dampingRatio = Spring.DampingRatioNoBouncy,
+                stiffness = Spring.StiffnessHigh
+            )
+        } else {
+            tween(durationMillis = 0)
+        },
         label = "drawerWidth"
     )
     val drawerOffsetX by animateDpAsState(
