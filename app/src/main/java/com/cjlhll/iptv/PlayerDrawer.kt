@@ -811,7 +811,7 @@ fun PlayerDrawer(
                                 ) {
                                     itemsIndexed(
                                         items = programs,
-                                        key = { _, p -> "${p.channelId}:${p.startMillis}:${p.endMillis}:${p.title}" }
+                                        key = { index, p -> "$index:${p.channelId}:${p.startMillis}:${p.endMillis}:${p.title}" }
                                     ) { index, p ->
                                         val timeText = formatEpgTimeRange(
                                             startMillis = p.startMillis,
@@ -890,7 +890,7 @@ fun PlayerDrawer(
                                     ) {
                                         itemsIndexed(
                                             items = dates,
-                                            key = { _, d -> d.toString() }
+                                            key = { index, d -> "$index:${d}" }
                                         ) { index, d ->
                                             DrawerDateItem(
                                                 text = epgDateFormatter.format(d),
