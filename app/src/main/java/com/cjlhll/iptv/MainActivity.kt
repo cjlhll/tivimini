@@ -38,11 +38,17 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.content.Intent
+import android.view.KeyEvent
 import android.widget.Toast
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.tv.material3.Button
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
@@ -92,6 +98,7 @@ fun MainScreen() {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val mainHandler = remember { Handler(Looper.getMainLooper()) }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     // Load initial values from Prefs
     val savedLiveSource = remember { Prefs.getLiveSource(context) }
@@ -105,40 +112,9 @@ fun MainScreen() {
     var lanError by remember { mutableStateOf<String?>(null) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    val onPush: (String, String) -> Unit = { live, epg ->
-        mainHandler.post {
-            if (live.isNotBlank()) liveSource = live
-            if (epg.isNotBlank()) epgSource = epg
-            Toast.makeText(context, "已从手机推送更新", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    DisposableEffect(Unit) {
-        val server = SourceConfigLanServer(
-            appContext = context.applicationContext,
-            onPush = onPush,
-        )
-        try {
-            val info = server.start()
-            lanUrl = info.url
-            lanError = null
-        } catch (e: Exception) {
-            lanUrl = null
-            lanError = e.message ?: "局域网服务启动失败"
-        }
-        onDispose { server.stop() }
-    }
-
-    LaunchedEffect(lanUrl) {
-        val url = lanUrl
-        qrBitmap = if (url.isNullOrBlank()) {
-            null
-        } else {
-            withContext(Dispatchers.Default) {
-                runCatching { QrCode.toBitmap(url, 640) }.getOrNull()
-            }
-        }
-    }
+    // Focus/Editing states for TextFields
+    var isLiveSourceEditing by remember { mutableStateOf(false) }
+    var isEpgSourceEditing by remember { mutableStateOf(false) }
 
     fun loadAndPlay(url: String, save: Boolean) {
         if (url.isBlank()) {
@@ -207,6 +183,47 @@ fun MainScreen() {
                 Toast.makeText(context, "发生错误: ${e.message}", Toast.LENGTH_SHORT).show()
             } finally {
                 isLoading = false
+            }
+        }
+    }
+
+    val onPush: (String, String) -> Unit = { live, epg ->
+        mainHandler.post {
+            if (live.isNotBlank()) liveSource = live
+            if (epg.isNotBlank()) epgSource = epg
+            Toast.makeText(context, "已从手机推送更新", Toast.LENGTH_SHORT).show()
+            
+            // Automatically save and play after push
+            // Use the pushed live source if available, otherwise use the existing state (which was just updated if not blank)
+            // But if pushed live is blank, we use current liveSource.
+            // Note: if live is not blank, liveSource is already updated above.
+            loadAndPlay(liveSource, true)
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val server = SourceConfigLanServer(
+            appContext = context.applicationContext,
+            onPush = onPush,
+        )
+        try {
+            val info = server.start()
+            lanUrl = info.url
+            lanError = null
+        } catch (e: Exception) {
+            lanUrl = null
+            lanError = e.message ?: "局域网服务启动失败"
+        }
+        onDispose { server.stop() }
+    }
+
+    LaunchedEffect(lanUrl) {
+        val url = lanUrl
+        qrBitmap = if (url.isNullOrBlank()) {
+            null
+        } else {
+            withContext(Dispatchers.Default) {
+                runCatching { QrCode.toBitmap(url, 640) }.getOrNull()
             }
         }
     }
@@ -314,18 +331,50 @@ fun MainScreen() {
                     value = liveSource,
                     onValueChange = { liveSource = it },
                     label = { Text("直播源地址") },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { 
+                            if (!it.isFocused) isLiveSourceEditing = false 
+                        }
+                        .onKeyEvent { event ->
+                            if (event.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
+                                if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
+                                    if (!isLiveSourceEditing) {
+                                        isLiveSourceEditing = true
+                                        keyboardController?.show()
+                                    }
+                                    false
+                                } else false
+                            } else false
+                        },
                     colors = textFieldColors,
-                    enabled = !isLoading
+                    enabled = !isLoading,
+                    readOnly = !isLiveSourceEditing
                 )
 
                 TextField(
                     value = epgSource,
                     onValueChange = { epgSource = it },
                     label = { Text("EPG地址") },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .onFocusChanged { 
+                            if (!it.isFocused) isEpgSourceEditing = false 
+                        }
+                        .onKeyEvent { event ->
+                            if (event.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
+                                if (event.key == Key.DirectionCenter || event.key == Key.Enter || event.key == Key.NumPadEnter) {
+                                    if (!isEpgSourceEditing) {
+                                        isEpgSourceEditing = true
+                                        keyboardController?.show()
+                                    }
+                                    false
+                                } else false
+                            } else false
+                        },
                     colors = textFieldColors,
-                    enabled = !isLoading
+                    enabled = !isLoading,
+                    readOnly = !isEpgSourceEditing
                 )
 
                 Button(
