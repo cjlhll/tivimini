@@ -155,6 +155,7 @@ fun PlayerDrawer(
 
     var autoProgramScrollKey by remember { mutableStateOf<String?>(null) }
     var isFocusRestoring by remember { mutableStateOf(false) }
+    var groupChangedFlag by remember { mutableStateOf(false) }
 
     val epgChannelUiCache = remember(epgData) {
         object : LinkedHashMap<String, EpgChannelUiData>(32, 0.75f, true) {
@@ -202,14 +203,25 @@ fun PlayerDrawer(
         }
     }
 
-    val focusTargetIndex = remember(channelIndexByUrl, selectedChannelUrl, focusedChannelUrl) {
+    val focusTargetIndex = remember(channelIndexByUrl, selectedChannelUrl, focusedChannelUrl, groupChangedFlag) {
         val fUrl = focusedChannelUrl
         if (!fUrl.isNullOrBlank()) {
-            return@remember channelIndexByUrl[fUrl] ?: -1
+            val idx = channelIndexByUrl[fUrl]
+            if (idx != null) return@remember idx
         }
+
+        // 如果发生了分组切换，且当前没有聚焦频道，则优先聚焦第一个
+        if (groupChangedFlag && channelIndexByUrl.isNotEmpty()) {
+            return@remember 0
+        }
+
         val sUrl = selectedChannelUrl
         if (!sUrl.isNullOrBlank()) {
-            return@remember channelIndexByUrl[sUrl] ?: -1
+            val idx = channelIndexByUrl[sUrl]
+            if (idx != null) return@remember idx
+        }
+        if (channelIndexByUrl.isNotEmpty()) {
+            return@remember 0
         }
         -1
     }
@@ -334,6 +346,8 @@ fun PlayerDrawer(
     LaunchedEffect(selectedGroup) {
         if (!visible) return@LaunchedEffect
         if (!showGroups) return@LaunchedEffect
+        groupChangedFlag = true
+        focusedChannelUrl = null
         if (channels.isEmpty()) return@LaunchedEffect
         runCatching {
             channelListState.scrollToItem(0)
@@ -755,6 +769,7 @@ fun PlayerDrawer(
                                         activeColumn = DrawerColumn.Channels
                                         if (!isFocusRestoring) {
                                             focusedChannelUrl = ch.url
+                                            groupChangedFlag = false
                                         }
                                         showDates = false
                                         showGroups = false
@@ -942,7 +957,6 @@ private fun DrawerGroupItem(
     var focused by remember { mutableStateOf(false) }
     val bg = when {
         focused -> MaterialTheme.colorScheme.surfaceVariant
-        selected -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
         else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.01f)
     }
 
@@ -986,12 +1000,8 @@ private fun DrawerChannelItem(
         else -> Color.Transparent
     }
     
-    // 选中状态通过文字颜色区分，不再使用背景
-    val contentColor = when {
-        focused -> MaterialTheme.colorScheme.onSurface
-        selected -> MaterialTheme.colorScheme.primary
-        else -> MaterialTheme.colorScheme.onSurface
-    }
+    // 选中状态不再特殊处理
+    val contentColor = MaterialTheme.colorScheme.onSurface
 
     Row(
         modifier = Modifier
@@ -1028,7 +1038,7 @@ private fun DrawerChannelItem(
                 FocusMarqueeText(
                     text = nowProgram?.title.orEmpty(),
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (selected && !focused) contentColor.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.72f),
                     focused = focused
                 )
                 val progress = nowProgram?.progress
@@ -1113,7 +1123,6 @@ private fun DrawerDateItem(
     var focused by remember { mutableStateOf(false) }
     val bg = when {
         focused -> MaterialTheme.colorScheme.surfaceVariant
-        selected -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
         else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.01f)
     }
 
