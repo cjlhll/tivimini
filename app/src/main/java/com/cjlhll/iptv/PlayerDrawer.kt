@@ -970,7 +970,10 @@ private fun DrawerGroupItem(
                 focused = it.isFocused
             }
             .focusable()
-            .clickable(onClick = onClick)
+            .clickable {
+                onClick()
+                focusRequester?.requestFocus()
+            }
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Text(
@@ -999,7 +1002,6 @@ private fun DrawerChannelItem(
         else -> Color.Transparent
     }
     
-    // 选中状态不再特殊处理
     val contentColor = MaterialTheme.colorScheme.onSurface
 
     Row(
@@ -1013,7 +1015,10 @@ private fun DrawerChannelItem(
                 focused = it.isFocused
             }
             .focusable()
-            .clickable(onClick = onClick)
+            .clickable {
+                onClick()
+                focusRequester?.requestFocus()
+            }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -1136,7 +1141,10 @@ private fun DrawerDateItem(
                 focused = it.isFocused
             }
             .focusable()
-            .clickable(onClick = onClick)
+            .clickable {
+                onClick()
+                focusRequester?.requestFocus()
+            }
             .padding(horizontal = 10.dp, vertical = 10.dp)
     ) {
         Text(
@@ -1181,7 +1189,10 @@ private fun DrawerProgramItem(
                 focused = it.isFocused
             }
             .focusable()
-            .clickable(onClick = onClick)
+            .clickable {
+                onClick()
+                focusRequester?.requestFocus()
+            }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
