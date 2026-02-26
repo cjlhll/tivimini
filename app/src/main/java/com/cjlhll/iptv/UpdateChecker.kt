@@ -75,6 +75,10 @@ object UpdateChecker {
         }
     }
 
+    suspend fun checkUpdateAndGetInfo(context: Context): UpdateInfo? {
+        return checkUpdate(context)
+    }
+
     private fun extractLatestTag(html: String): String? {
         val pattern = Pattern.compile("/releases/tag/([^\\s\"']+)")
         val matcher = pattern.matcher(html)

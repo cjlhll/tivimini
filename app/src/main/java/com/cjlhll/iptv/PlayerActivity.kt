@@ -290,6 +290,9 @@ fun VideoPlayerScreen(
     var heavyWorkEnabled by remember { mutableStateOf(false) }
     var firstDrawerOpenSeen by remember { mutableStateOf(false) }
 
+    var showUpdateDialog by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+
     LaunchedEffect(Unit) {
         delay(1500)
         heavyWorkEnabled = true
@@ -775,8 +778,31 @@ fun VideoPlayerScreen(
                 settingsDrawerOpen = false
                 android.widget.Toast.makeText(context, "开始更新EPG...", android.widget.Toast.LENGTH_SHORT).show()
             },
+            onCheckUpdateClick = {
+                settingsDrawerOpen = false
+                android.widget.Toast.makeText(context, "正在检查更新...", android.widget.Toast.LENGTH_SHORT).show()
+                scope.launch {
+                    val info = UpdateChecker.checkUpdateAndGetInfo(context)
+                    if (info != null && info.hasUpdate) {
+                        updateInfo = info
+                        showUpdateDialog = true
+                    } else {
+                        android.widget.Toast.makeText(context, "已是最新版本", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
             onClose = { settingsDrawerOpen = false }
         )
+
+        if (showUpdateDialog && updateInfo != null) {
+            UpdateDialog(
+                updateInfo = updateInfo!!,
+                onDismiss = {
+                    showUpdateDialog = false
+                    updateInfo = null
+                }
+            )
+        }
 
         val req = catchupRequest
 

@@ -43,6 +43,7 @@ fun SettingsDrawer(
     visible: Boolean,
     onSourceConfigClick: () -> Unit,
     onEpgSettingsClick: () -> Unit,
+    onCheckUpdateClick: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -52,6 +53,7 @@ fun SettingsDrawer(
 
     val sourceConfigRequester = remember { FocusRequester() }
     val epgSettingsRequester = remember { FocusRequester() }
+    val checkUpdateRequester = remember { FocusRequester() }
     
     // Auto focus first item when opened
     LaunchedEffect(visible) {
@@ -109,6 +111,14 @@ fun SettingsDrawer(
                         text = "更新EPG",
                         focusRequester = epgSettingsRequester,
                         onClick = onEpgSettingsClick
+                    )
+
+                    Spacer(modifier = Modifier.padding(8.dp))
+
+                    SettingsItem(
+                        text = "检查更新",
+                        focusRequester = checkUpdateRequester,
+                        onClick = onCheckUpdateClick
                     )
                 }
             }
