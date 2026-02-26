@@ -27,11 +27,14 @@ jobs:
     - name: Build with Gradle
       run: ./gradlew assembleRelease -PAPP_VERSION_NAME="${{ github.ref_name }}" -PAPP_VERSION_CODE="${{ github.run_number }}"
 
+    - name: Rename APK
+      run: cp app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/TiviMini-${{ github.ref_name }}.apk
+
     - name: Create Release
       uses: softprops/action-gh-release@v1
       if: startsWith(github.ref, 'refs/tags/')
       with:
-        files: app/build/outputs/apk/release/app-release.apk
+        files: app/build/outputs/apk/release/TiviMini-${{ github.ref_name }}.apk
         generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

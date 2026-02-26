@@ -38,12 +38,22 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.util.Log
 import android.view.KeyEvent
 import android.widget.Toast
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Text as M3Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
@@ -60,6 +70,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.io.File
 import java.io.IOException
 
 class MainActivity : ComponentActivity() {
@@ -115,6 +126,29 @@ fun MainScreen() {
     // Focus/Editing states for TextFields
     var isLiveSourceEditing by remember { mutableStateOf(false) }
     var isEpgSourceEditing by remember { mutableStateOf(false) }
+
+    var updateInfo by remember { mutableStateOf<UpdateChecker.UpdateInfo?>(null) }
+    var showUpdateDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        Log.d("MainActivity", "Starting update check...")
+        val info = UpdateChecker.checkUpdate(context)
+        Log.d("MainActivity", "Update check result: $info")
+        if (info != null && info.hasUpdate) {
+            Log.d("MainActivity", "Showing update dialog")
+            updateInfo = info
+            showUpdateDialog = true
+        } else {
+            Log.d("MainActivity", "No update available or check failed")
+        }
+    }
+
+    if (showUpdateDialog && updateInfo != null) {
+        UpdateDialog(
+            updateInfo = updateInfo!!,
+            onDismiss = { showUpdateDialog = false }
+        )
+    }
 
     fun loadAndPlay(url: String, save: Boolean) {
         if (url.isBlank()) {
@@ -445,4 +479,88 @@ fun findChannel(m3uContent: String, lastUrl: String?, lastTitle: String?): Pair<
     
     // Return priority: Title Match -> First Channel
     return titleMatch ?: firstChannel
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun UpdateDialog(
+    updateInfo: UpdateChecker.UpdateInfo,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val confirmButtonFocusRequester = remember { FocusRequester() }
+
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0f) }
+    var downloadComplete by remember { mutableStateOf(false) }
+    var downloadedFile by remember { mutableStateOf<File?>(null) }
+
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        confirmButtonFocusRequester.requestFocus()
+    }
+
+    AlertDialog(
+        onDismissRequest = { if (!isDownloading) onDismiss() },
+        containerColor = Color(0xFF1E1E1E),
+        titleContentColor = Color.White,
+        textContentColor = Color.LightGray,
+        title = {
+            M3Text(if (isDownloading) "正在下载..." else "发现新版本")
+        },
+        text = {
+            if (isDownloading) {
+                Column {
+                    M3Text("下载进度: ${(downloadProgress * 100).toInt()}%")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { downloadProgress },
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color.White,
+                        trackColor = Color(0xFF424242),
+                    )
+                }
+            } else {
+                M3Text("当前版本: ${updateInfo.currentVersion}\n最新版本: ${updateInfo.latestTag}\n\n是否下载更新?")
+            }
+        },
+        confirmButton = {
+            if (!isDownloading) {
+                Button(
+                    onClick = {
+                        isDownloading = true
+                        scope.launch {
+                            val file = ApkDownloader.downloadWithProgress(
+                                context = context,
+                                url = updateInfo.downloadUrl
+                            ) { progress ->
+                                downloadProgress = progress.progress
+                            }
+
+                            if (file != null) {
+                                downloadedFile = file
+                                downloadComplete = true
+                                ApkDownloader.installApk(context, file)
+                                onDismiss()
+                            } else {
+                                isDownloading = false
+                                Toast.makeText(context, "下载失败", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    },
+                    modifier = Modifier.focusRequester(confirmButtonFocusRequester)
+                ) {
+                    Text("更新")
+                }
+            }
+        },
+        dismissButton = {
+            if (!isDownloading) {
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        }
+    )
 }

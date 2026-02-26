@@ -3,10 +3,13 @@ package com.cjlhll.iptv
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import java.io.File
 
 class SplashActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        cleanOldApkFiles()
 
         val liveSource = Prefs.getLiveSource(this)
         val (lastUrl, lastTitle) = Prefs.getLastChannel(this)
@@ -29,5 +32,16 @@ class SplashActivity : ComponentActivity() {
         }
         
         finish()
+    }
+
+    private fun cleanOldApkFiles() {
+        try {
+            cacheDir.listFiles()?.forEach { file ->
+                if (file.name.startsWith("update_") && file.name.endsWith(".apk")) {
+                    file.delete()
+                }
+            }
+        } catch (e: Exception) {
+        }
     }
 }
