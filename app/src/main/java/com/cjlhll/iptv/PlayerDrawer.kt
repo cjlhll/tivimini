@@ -321,7 +321,12 @@ fun PlayerDrawer(
             }
             isFocusRestoring = false
         } else {
-            // 非首次打开或未切换分组时，只请求焦点，不滚动
+            // 非首次打开或未切换分组时，同步 focusedChannelUrl 为当前播放频道，并请求焦点
+            val targetUrl = selectedChannelUrl
+            if (targetUrl != null && focusedChannelUrl != targetUrl) {
+                focusedChannelUrl = targetUrl
+                stableFocusedChannelUrl = targetUrl
+            }
             if (channels.isNotEmpty() && activeColumn == DrawerColumn.Channels) {
                 isFocusRestoring = true
                 repeat(10) {
