@@ -156,6 +156,7 @@ fun PlayerDrawer(
     var autoProgramScrollKey by remember { mutableStateOf<String?>(null) }
     var isFocusRestoring by remember { mutableStateOf(false) }
     var groupChangedFlag by remember { mutableStateOf(false) }
+    var hasRestoredScrollPosition by remember { mutableStateOf(false) }
 
     val epgChannelUiCache = remember(epgData) {
         object : LinkedHashMap<String, EpgChannelUiData>(32, 0.75f, true) {
@@ -259,88 +260,84 @@ fun PlayerDrawer(
             val targetUrl = selectedChannelUrl ?: channels.firstOrNull()?.url
             focusedChannelUrl = targetUrl
             stableFocusedChannelUrl = targetUrl
-            
-            // 预滚动到目标位置，确保下次打开时位置正确
-            if (targetUrl != null) {
-                val idx = channelIndexByUrl[targetUrl]
-                if (idx != null) {
-                    val scrollIndex = (idx - 2).coerceAtLeast(0)
-                    runCatching { channelListState.scrollToItem(scrollIndex) }
-                }
-            }
 
             return@LaunchedEffect
         }
 
-        isFocusRestoring = true
-        val targetUrl = selectedChannelUrl
-        val targetIndex = targetUrl?.let { channelIndexByUrl[it] }
-        
-        if (focusedChannelUrl == null) {
-            if (targetIndex != null) {
-                focusedChannelUrl = targetUrl
-                stableFocusedChannelUrl = targetUrl
+        // 只有首次打开或分组变化时才滚动列表
+        if (!hasRestoredScrollPosition || groupChangedFlag) {
+            hasRestoredScrollPosition = true
+            
+            isFocusRestoring = true
+            val targetUrl = selectedChannelUrl
+            val targetIndex = targetUrl?.let { channelIndexByUrl[it] }
+            
+            if (focusedChannelUrl == null) {
+                if (targetIndex != null) {
+                    focusedChannelUrl = targetUrl
+                    stableFocusedChannelUrl = targetUrl
+                }
             }
-        }
-        
-        if (channels.isNotEmpty()) {
-            // 立即执行位置修正，不再等待
-            if (targetIndex != null) {
-                // 1. 立即滚动到目标位置附近，防止列表显示在错误位置导致焦点跳变
-                val scrollIndex = (targetIndex - 2).coerceAtLeast(0)
-                runCatching { channelListState.scrollToItem(scrollIndex) }
+            
+            if (channels.isNotEmpty() && targetIndex != null) {
+                val visibleIndices = channelListState.layoutInfo.visibleItemsInfo.map { it.index }.toSet()
+                val targetScroll = (targetIndex - 2).coerceAtLeast(0)
+                if (targetIndex !in visibleIndices && targetScroll !in visibleIndices) {
+                    runCatching { channelListState.scrollToItem(targetScroll) }
+                }
                 
-                // 2. 确保目标 URL 正确
                 if (focusedChannelUrl != targetUrl) {
                     focusedChannelUrl = targetUrl
                     stableFocusedChannelUrl = targetUrl
                 }
                 
-                // 3. 等待布局稳定和 Item 挂载
-                // 给一点时间让 scrollToItem 生效并完成 Layout
                 delay(100)
                 
                 withTimeoutOrNull(500) {
-                     snapshotFlow { 
-                         channelListState.layoutInfo.visibleItemsInfo.any { it.index == targetIndex } 
-                     }.filter { it }.first()
+                    snapshotFlow { 
+                        channelListState.layoutInfo.visibleItemsInfo.any { it.index == targetIndex } 
+                    }.filter { it }.first()
                 }
-            } else {
-                // 目标不在列表中：延迟一小会儿后处理 fallback
-                delay(50)
-                val fallbackIndex = channelListState.firstVisibleItemIndex
-                val fallbackUrl = channels.getOrNull(fallbackIndex)?.url
-                if (fallbackUrl != null && focusedChannelUrl != fallbackUrl) {
-                    focusedChannelUrl = fallbackUrl
-                    stableFocusedChannelUrl = fallbackUrl
+                
+                if (activeColumn == DrawerColumn.Channels) {
+                    repeat(20) {
+                        if (activeColumn != DrawerColumn.Channels) {
+                            isFocusRestoring = false
+                            return@LaunchedEffect
+                        }
+
+                            if (focusedChannelUrl != targetUrl) {
+                            focusedChannelUrl = targetUrl
+                            stableFocusedChannelUrl = targetUrl
+                        }
+                        
+                        if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) {
+                            isFocusRestoring = false
+                            return@LaunchedEffect
+                        }
+                        delay(50) 
+                    }
                 }
             }
-            
-            if (activeColumn == DrawerColumn.Channels) {
-                // 尝试多次请求焦点，直到成功
-                // 增加重试次数和间隔
-                repeat(20) {
-                    // 检查 activeColumn 是否仍然是 Channels，防止用户快速切换到分组导致焦点冲突
+            isFocusRestoring = false
+        } else {
+            // 非首次打开或未切换分组时，只请求焦点，不滚动
+            if (channels.isNotEmpty() && activeColumn == DrawerColumn.Channels) {
+                isFocusRestoring = true
+                repeat(10) {
                     if (activeColumn != DrawerColumn.Channels) {
                         isFocusRestoring = false
                         return@LaunchedEffect
                     }
-
-                    // 再次校验目标
-                    if (targetIndex != null && focusedChannelUrl != targetUrl) {
-                        focusedChannelUrl = targetUrl
-                        stableFocusedChannelUrl = targetUrl
-                    }
-                    
                     if (runCatching { selectedChannelRequester.requestFocus() }.isSuccess) {
                         isFocusRestoring = false
                         return@LaunchedEffect
                     }
-                    delay(50) 
+                    delay(30)
                 }
+                isFocusRestoring = false
             }
         }
-        isFocusRestoring = false
     }
 
     LaunchedEffect(selectedGroup) {
@@ -394,7 +391,9 @@ fun PlayerDrawer(
         withFrameNanos { }
 
         runCatching {
-            if (channelListState.layoutInfo.visibleItemsInfo.none { it.index == focusTargetIndex }) {
+            val currentFirst = channelListState.firstVisibleItemIndex
+            val targetScroll = (focusTargetIndex - 2).coerceAtLeast(0)
+            if (currentFirst != targetScroll && channelListState.layoutInfo.visibleItemsInfo.none { it.index == focusTargetIndex }) {
                 channelListState.scrollToItem(focusTargetIndex)
             }
         }

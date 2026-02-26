@@ -349,7 +349,7 @@ fun MainScreen() {
                         },
                     colors = textFieldColors,
                     enabled = !isLoading,
-                    readOnly = !isLiveSourceEditing
+                    readOnly = false
                 )
 
                 TextField(
@@ -374,7 +374,7 @@ fun MainScreen() {
                         },
                     colors = textFieldColors,
                     enabled = !isLoading,
-                    readOnly = !isEpgSourceEditing
+                    readOnly = false
                 )
 
                 Button(
