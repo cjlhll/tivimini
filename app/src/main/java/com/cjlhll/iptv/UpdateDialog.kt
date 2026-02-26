@@ -9,7 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text as M3Text
-import androidx.compose.material3.TextButton
+
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -105,7 +105,7 @@ fun UpdateDialog(
         },
         dismissButton = {
             if (!isDownloading) {
-                TextButton(onClick = onDismiss) {
+                Button(onClick = onDismiss) {
                     Text("取消")
                 }
             }
