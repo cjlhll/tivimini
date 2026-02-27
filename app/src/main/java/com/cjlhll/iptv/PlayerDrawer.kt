@@ -256,7 +256,6 @@ fun PlayerDrawer(
             pendingFocusToChannels = false
             pendingFocusToPrograms = false
             pendingFocusToDates = false
-            hasRestoredScrollPosition = false
 
             val targetUrl = selectedChannelUrl ?: channels.firstOrNull()?.url
             focusedChannelUrl = targetUrl
@@ -354,6 +353,17 @@ fun PlayerDrawer(
         if (channels.isEmpty()) return@LaunchedEffect
         runCatching {
             channelListState.scrollToItem(0)
+        }
+    }
+
+    LaunchedEffect(selectedChannelUrl) {
+        if (!visible) {
+            hasRestoredScrollPosition = false
+        }
+        val targetUrl = selectedChannelUrl
+        if (targetUrl != null && focusedChannelUrl != targetUrl) {
+            focusedChannelUrl = targetUrl
+            stableFocusedChannelUrl = targetUrl
         }
     }
 
