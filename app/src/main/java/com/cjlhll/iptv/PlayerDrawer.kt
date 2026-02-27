@@ -128,6 +128,8 @@ fun PlayerDrawer(
     onSelectChannel: (Channel) -> Unit,
     onPlayProgram: (CatchupPlayRequest) -> Unit,
     onClose: () -> Unit,
+    onActiveColumnChanged: (DrawerColumn) -> Unit = {},
+    requestedActiveColumn: DrawerColumn? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -147,6 +149,23 @@ fun PlayerDrawer(
     var pendingFocusToChannels by remember { mutableStateOf(false) }
     var pendingFocusToPrograms by remember { mutableStateOf(false) }
     var pendingFocusToDates by remember { mutableStateOf(false) }
+
+    LaunchedEffect(activeColumn) {
+        onActiveColumnChanged(activeColumn)
+    }
+
+    LaunchedEffect(requestedActiveColumn) {
+        val target = requestedActiveColumn ?: return@LaunchedEffect
+        if (activeColumn != target) {
+            activeColumn = target
+            when (target) {
+                DrawerColumn.Groups -> pendingFocusToGroups = true
+                DrawerColumn.Channels -> pendingFocusToChannels = true
+                DrawerColumn.Programs -> pendingFocusToPrograms = true
+                DrawerColumn.Dates -> pendingFocusToDates = true
+            }
+        }
+    }
 
     var focusedChannelUrl by remember { mutableStateOf<String?>(null) }
     var stableFocusedChannelUrl by remember { mutableStateOf<String?>(null) }
@@ -661,6 +680,9 @@ fun PlayerDrawer(
                     if (it.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
 
                     if (it.key == Key.Back) {
+                        if (activeColumn != DrawerColumn.Channels) {
+                            pendingFocusToChannels = true
+                        }
                         onClose()
                         true
                     } else if (it.key == Key.DirectionUp && activeColumn == DrawerColumn.Channels && channelCount > 0) {

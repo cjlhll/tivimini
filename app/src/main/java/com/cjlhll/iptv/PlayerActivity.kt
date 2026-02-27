@@ -50,6 +50,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.lifecycleScope
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -69,6 +70,8 @@ class PlayerActivity : ComponentActivity() {
     private var onChannelStep: ((Int) -> Boolean)? = null
     private var setDrawerOpen: ((Boolean) -> Unit)? = null
     private var isDrawerOpen: Boolean = false
+    private var drawerActiveColumn: DrawerColumn? = null
+    private var focusToDrawerChannels: (() -> Unit)? = null
     private var setSettingsDrawerOpen: ((Boolean) -> Unit)? = null
     private var isSettingsDrawerOpen: Boolean = false
     private var setInfoBannerOpen: ((Boolean) -> Unit)? = null
@@ -112,6 +115,8 @@ class PlayerActivity : ComponentActivity() {
                         setOnChannelStep = { onChannelStep = it },
                         setDrawerOpenController = { setDrawerOpen = it },
                         onDrawerOpenChanged = { isDrawerOpen = it },
+                        onDrawerActiveColumnChanged = { drawerActiveColumn = it },
+                        setFocusToDrawerChannelsController = { focusToDrawerChannels = it },
                         setSettingsDrawerOpenController = { setSettingsDrawerOpen = it },
                         onSettingsDrawerOpenChanged = { isSettingsDrawerOpen = it },
                         setInfoBannerOpenController = { setInfoBannerOpen = it },
@@ -179,7 +184,15 @@ class PlayerActivity : ComponentActivity() {
 
                 KeyEvent.KEYCODE_BACK -> {
                     if (isDrawerOpen) {
-                        setDrawerOpen?.invoke(false)
+                        if (drawerActiveColumn != DrawerColumn.Channels) {
+                            focusToDrawerChannels?.invoke()
+                            lifecycleScope.launch {
+                                delay(60)
+                                setDrawerOpen?.invoke(false)
+                            }
+                        } else {
+                            setDrawerOpen?.invoke(false)
+                        }
                         return true
                     }
                     if (isSettingsDrawerOpen) {
@@ -247,6 +260,8 @@ fun VideoPlayerScreen(
     setOnChannelStep: (((Int) -> Boolean)?) -> Unit,
     setDrawerOpenController: (((Boolean) -> Unit)?) -> Unit,
     onDrawerOpenChanged: (Boolean) -> Unit,
+    onDrawerActiveColumnChanged: (DrawerColumn?) -> Unit,
+    setFocusToDrawerChannelsController: (() -> Unit) -> Unit,
     setSettingsDrawerOpenController: (((Boolean) -> Unit)?) -> Unit,
     onSettingsDrawerOpenChanged: (Boolean) -> Unit,
     setInfoBannerOpenController: (((Boolean) -> Unit)?) -> Unit,
@@ -263,6 +278,7 @@ fun VideoPlayerScreen(
     var player by remember { mutableStateOf<ExoPlayer?>(null) }
     
     var drawerOpen by remember { mutableStateOf(false) }
+    var drawerActiveColumn by remember { mutableStateOf<DrawerColumn?>(null) }
     var settingsDrawerOpen by remember { mutableStateOf(false) }
     var infoBannerOpen by remember { mutableStateOf(false) }
     var videoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
@@ -417,8 +433,13 @@ fun VideoPlayerScreen(
         }
     }
 
+    val focusToChannels = {
+        drawerActiveColumn = DrawerColumn.Channels
+    }
+
     DisposableEffect(Unit) {
         setDrawerOpenController { drawerOpen = it }
+        setFocusToDrawerChannelsController(focusToChannels)
         setSettingsDrawerOpenController { settingsDrawerOpen = it }
         setInfoBannerOpenController { infoBannerOpen = it }
         onDispose {
@@ -430,6 +451,10 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(drawerOpen) {
         onDrawerOpenChanged(drawerOpen)
+    }
+
+    LaunchedEffect(drawerActiveColumn) {
+        onDrawerActiveColumnChanged(drawerActiveColumn)
     }
 
     LaunchedEffect(settingsDrawerOpen) {
@@ -764,7 +789,9 @@ fun VideoPlayerScreen(
                 }
                 drawerOpen = false
             },
-            onClose = { drawerOpen = false }
+            onClose = { drawerOpen = false },
+            onActiveColumnChanged = { drawerActiveColumn = it },
+            requestedActiveColumn = drawerActiveColumn
         )
 
         SettingsDrawer(
