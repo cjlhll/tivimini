@@ -187,7 +187,7 @@ class PlayerActivity : ComponentActivity() {
                         if (drawerActiveColumn != DrawerColumn.Channels) {
                             focusToDrawerChannels?.invoke()
                             lifecycleScope.launch {
-                                delay(60)
+                                delay(80)
                                 setDrawerOpen?.invoke(false)
                             }
                         } else {
