@@ -275,6 +275,7 @@ fun PlayerDrawer(
             pendingFocusToChannels = false
             pendingFocusToPrograms = false
             pendingFocusToDates = false
+            hasRestoredScrollPosition = false
 
             val targetUrl = selectedChannelUrl ?: channels.firstOrNull()?.url
             focusedChannelUrl = targetUrl
