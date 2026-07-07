@@ -74,6 +74,8 @@ class PlayerActivity : ComponentActivity() {
     private var focusToDrawerChannels: (() -> Unit)? = null
     private var setSettingsDrawerOpen: ((Boolean) -> Unit)? = null
     private var isSettingsDrawerOpen: Boolean = false
+    private var setQualityDialogOpen: ((Boolean) -> Unit)? = null
+    private var isQualityDialogOpen: Boolean = false
     private var setInfoBannerOpen: ((Boolean) -> Unit)? = null
     private var isInfoBannerOpen: Boolean = false
     private var isCatchupPlayback: Boolean = false
@@ -119,6 +121,8 @@ class PlayerActivity : ComponentActivity() {
                         setFocusToDrawerChannelsController = { focusToDrawerChannels = it },
                         setSettingsDrawerOpenController = { setSettingsDrawerOpen = it },
                         onSettingsDrawerOpenChanged = { isSettingsDrawerOpen = it },
+                        setQualityDialogOpenController = { setQualityDialogOpen = it },
+                        onQualityDialogOpenChanged = { isQualityDialogOpen = it },
                         setInfoBannerOpenController = { setInfoBannerOpen = it },
                         onInfoBannerOpenChanged = { isInfoBannerOpen = it },
                         setOnCatchupSeek = { onCatchupSeek = it },
@@ -145,14 +149,14 @@ class PlayerActivity : ComponentActivity() {
         if (event.action == KeyEvent.ACTION_DOWN) {
             when (event.keyCode) {
                 KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && !isQualityDialogOpen) {
                         setInfoBannerOpen?.invoke(true)
                         return true
                     }
                 }
 
                 KeyEvent.KEYCODE_DPAD_LEFT -> {
-                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && !isQualityDialogOpen) {
                         if (isCatchupPlayback) {
                             val step = calculateSeekStep(event.repeatCount)
                             if (onCatchupSeek?.invoke(-step) == true) return true
@@ -164,7 +168,7 @@ class PlayerActivity : ComponentActivity() {
                 }
 
                 KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && !isQualityDialogOpen) {
                         if (isCatchupPlayback) {
                             val step = calculateSeekStep(event.repeatCount)
                             if (onCatchupSeek?.invoke(step) == true) return true
@@ -176,13 +180,17 @@ class PlayerActivity : ComponentActivity() {
                 }
 
                 KeyEvent.KEYCODE_MENU -> {
-                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && !isQualityDialogOpen) {
                         setSettingsDrawerOpen?.invoke(true)
                         return true
                     }
                 }
 
                 KeyEvent.KEYCODE_BACK -> {
+                    if (isQualityDialogOpen) {
+                        setQualityDialogOpen?.invoke(false)
+                        return true
+                    }
                     if (isDrawerOpen) {
                         if (drawerActiveColumn != DrawerColumn.Channels) {
                             focusToDrawerChannels?.invoke()
@@ -227,7 +235,7 @@ class PlayerActivity : ComponentActivity() {
                 }
 
                 KeyEvent.KEYCODE_DPAD_UP -> {
-                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && !isQualityDialogOpen) {
                         if (isCatchupPlayback) {
                             setInfoBannerOpen?.invoke(true)
                             return true
@@ -237,7 +245,7 @@ class PlayerActivity : ComponentActivity() {
                 }
 
                 KeyEvent.KEYCODE_DPAD_DOWN -> {
-                    if (!isDrawerOpen && !isSettingsDrawerOpen) {
+                    if (!isDrawerOpen && !isSettingsDrawerOpen && !isQualityDialogOpen) {
                         if (isCatchupPlayback) {
                             setInfoBannerOpen?.invoke(true)
                             return true
@@ -264,6 +272,8 @@ fun VideoPlayerScreen(
     setFocusToDrawerChannelsController: (() -> Unit) -> Unit,
     setSettingsDrawerOpenController: (((Boolean) -> Unit)?) -> Unit,
     onSettingsDrawerOpenChanged: (Boolean) -> Unit,
+    setQualityDialogOpenController: (((Boolean) -> Unit)?) -> Unit,
+    onQualityDialogOpenChanged: (Boolean) -> Unit,
     setInfoBannerOpenController: (((Boolean) -> Unit)?) -> Unit,
     onInfoBannerOpenChanged: (Boolean) -> Unit,
     setOnCatchupSeek: (((Long) -> Boolean)?) -> Unit,
@@ -280,7 +290,9 @@ fun VideoPlayerScreen(
     var drawerOpen by remember { mutableStateOf(false) }
     var drawerActiveColumn by remember { mutableStateOf<DrawerColumn?>(null) }
     var settingsDrawerOpen by remember { mutableStateOf(false) }
+    var qualityDialogOpen by remember { mutableStateOf(false) }
     var infoBannerOpen by remember { mutableStateOf(false) }
+    val channelSwitch = rememberChannelSwitchController()
     var videoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -449,14 +461,18 @@ fun VideoPlayerScreen(
         drawerActiveColumn = DrawerColumn.Channels
     }
 
+    BindChannelSwitchLoading(channelSwitch, player)
+
     DisposableEffect(Unit) {
         setDrawerOpenController { drawerOpen = it }
         setFocusToDrawerChannelsController(focusToChannels)
         setSettingsDrawerOpenController { settingsDrawerOpen = it }
+        setQualityDialogOpenController { qualityDialogOpen = it }
         setInfoBannerOpenController { infoBannerOpen = it }
         onDispose {
             setDrawerOpenController(null)
             setSettingsDrawerOpenController(null)
+            setQualityDialogOpenController(null)
             setInfoBannerOpenController(null)
         }
     }
@@ -471,6 +487,10 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(settingsDrawerOpen) {
         onSettingsDrawerOpenChanged(settingsDrawerOpen)
+    }
+
+    LaunchedEffect(qualityDialogOpen) {
+        onQualityDialogOpenChanged(qualityDialogOpen)
     }
 
     LaunchedEffect(infoBannerOpen, currentGroupIndex, currentVariantIndex) {
@@ -718,18 +738,24 @@ fun VideoPlayerScreen(
         nowProgramByUrl = map
     }
 
+    fun startPlayback(url: String, showLoading: Boolean = true) {
+        val isSameLiveUrl = catchupRequest == null && url == currentChannel?.url
+        if (showLoading && !isSameLiveUrl) {
+            channelSwitch.show()
+        }
+        player?.let { p ->
+            p.setMediaItem(MediaItem.fromUri(url))
+            p.prepare()
+            p.play()
+        }
+    }
+
     fun playGroupVariant(groupIndex: Int, variantIndex: Int) {
         val group = channelGroups.getOrNull(groupIndex) ?: return
         val variant = group.variants.getOrNull(variantIndex) ?: return
         val channel = variant.channel
         catchupRequest = null
-
-        player?.let { p ->
-            p.setMediaItem(MediaItem.fromUri(channel.url))
-            p.prepare()
-            p.play()
-        }
-
+        startPlayback(channel.url)
         currentGroupIndex = groupIndex
         currentVariantIndex = variantIndex
         Prefs.setLastChannel(context, channel.url, channel.title)
@@ -765,11 +791,7 @@ fun VideoPlayerScreen(
                 playChannel(channel)
             } else {
                 catchupRequest = null
-                player?.let { p ->
-                    p.setMediaItem(MediaItem.fromUri(req.liveUrl))
-                    p.prepare()
-                    p.play()
-                }
+                startPlayback(req.liveUrl)
             }
             true
         }
@@ -782,7 +804,7 @@ fun VideoPlayerScreen(
     DisposableEffect(channelGroups, currentGroupIndex, player) {
         setOnChannelStep { direction ->
             if (channelGroups.size < 2) return@setOnChannelStep false
-            if (drawerOpen || settingsDrawerOpen) return@setOnChannelStep false
+            if (drawerOpen || settingsDrawerOpen || qualityDialogOpen) return@setOnChannelStep false
             val size = channelGroups.size
             val nextGroupIndex = (currentGroupIndex + direction).let { raw ->
                 ((raw % size) + size) % size
@@ -840,11 +862,7 @@ fun VideoPlayerScreen(
             onPlayProgram = { req ->
                 Log.d("PlayerActivity", "onPlayProgram called with url: ${req.catchupUrl}")
                 catchupRequest = req
-                player?.let { p ->
-                    p.setMediaItem(MediaItem.fromUri(req.catchupUrl))
-                    p.prepare()
-                    p.play()
-                }
+                startPlayback(req.catchupUrl)
                 drawerOpen = false
             },
             onClose = { drawerOpen = false },
@@ -871,15 +889,10 @@ fun VideoPlayerScreen(
                 settingsDrawerOpen = false
                 android.widget.Toast.makeText(context, "开始更新EPG...", android.widget.Toast.LENGTH_SHORT).show()
             },
-            qualityVariants = qualityVariants,
-            onQualitySelect = { variantIndex ->
-                playGroupVariant(currentGroupIndex, variantIndex)
+            qualityMenuEnabled = qualityVariants.size > 1,
+            onQualityMenuClick = {
                 settingsDrawerOpen = false
-                android.widget.Toast.makeText(
-                    context,
-                    "已切换至 ${qualityVariants.getOrNull(variantIndex)?.label ?: ""}",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show()
+                qualityDialogOpen = true
             },
             onCheckUpdateClick = {
                 settingsDrawerOpen = false
@@ -895,6 +908,16 @@ fun VideoPlayerScreen(
                 }
             },
             onClose = { settingsDrawerOpen = false }
+        )
+
+        QualitySelectorDialog(
+            visible = qualityDialogOpen,
+            channelTitle = currentGroup?.displayTitle.orEmpty(),
+            variants = qualityVariants,
+            onSelect = { variantIndex ->
+                playGroupVariant(currentGroupIndex, variantIndex)
+            },
+            onClose = { qualityDialogOpen = false }
         )
 
         if (showUpdateDialog && updateInfo != null) {
@@ -967,6 +990,8 @@ fun VideoPlayerScreen(
                 )
             }
         }
+
+        ChannelSwitchOverlay(controller = channelSwitch)
     }
 }
 

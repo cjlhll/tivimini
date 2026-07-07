@@ -2,8 +2,10 @@ package com.cjlhll.iptv
 
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
@@ -11,12 +13,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,100 +40,92 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 
+data class QualityVariantUi(
+    val label: String,
+    val selected: Boolean
+)
+
 @Composable
-fun SettingsDrawer(
+fun QualitySelectorDialog(
     visible: Boolean,
-    onSourceConfigClick: () -> Unit,
-    onEpgSettingsClick: () -> Unit,
-    qualityMenuEnabled: Boolean = false,
-    onQualityMenuClick: () -> Unit = {},
-    onCheckUpdateClick: () -> Unit,
+    channelTitle: String,
+    variants: List<QualityVariantUi>,
+    onSelect: (Int) -> Unit,
     onClose: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
 ) {
-    val container = MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
-    val scrim = Color.Transparent
-    val shape = RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp)
+    val container = MaterialTheme.colorScheme.surface.copy(alpha = 0.98f)
+    val shape = RoundedCornerShape(18.dp)
+    val scrollState = rememberScrollState()
+    val itemRequesters = remember(variants.size) {
+        List(variants.size) { FocusRequester() }
+    }
 
-    val sourceConfigRequester = remember { FocusRequester() }
-    val epgSettingsRequester = remember { FocusRequester() }
-    val qualityMenuRequester = remember { FocusRequester() }
-    val checkUpdateRequester = remember { FocusRequester() }
-
-    LaunchedEffect(visible) {
-        if (visible) {
-            sourceConfigRequester.requestFocus()
+    LaunchedEffect(visible, variants) {
+        if (visible && variants.isNotEmpty()) {
+            val selectedIndex = variants.indexOfFirst { it.selected }.coerceAtLeast(0)
+            itemRequesters.getOrNull(selectedIndex)?.requestFocus()
         }
     }
 
     AnimatedVisibility(
         visible = visible,
-        enter = slideInHorizontally(animationSpec = tween(160), initialOffsetX = { it }),
-        exit = slideOutHorizontally(animationSpec = tween(140), targetOffsetX = { it }),
+        enter = fadeIn(tween(160)) + scaleIn(initialScale = 0.96f),
+        exit = fadeOut(tween(120)) + scaleOut(targetScale = 0.96f),
         modifier = modifier.fillMaxSize()
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(scrim)
+                .background(Color.Black.copy(alpha = 0.55f))
                 .onPreviewKeyEvent {
-                    if (it.key == Key.Back || it.key == Key.DirectionLeft) {
+                    if (it.key == Key.Back) {
                         onClose()
                         true
                     } else {
                         false
                     }
-                }
+                },
+            contentAlignment = Alignment.Center
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxHeight()
-                    .width(300.dp)
-                    .align(Alignment.CenterEnd)
+                    .width(360.dp)
+                    .heightIn(max = 480.dp)
                     .background(container, shape)
                     .padding(24.dp)
             ) {
                 Column(
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "设置",
+                        text = "清晰度选择",
                         style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.padding(bottom = 24.dp)
+                        color = MaterialTheme.colorScheme.onSurface
                     )
-
-                    SettingsItem(
-                        text = "源配置",
-                        focusRequester = sourceConfigRequester,
-                        onClick = onSourceConfigClick
-                    )
-
-                    Spacer(modifier = Modifier.padding(8.dp))
-
-                    SettingsItem(
-                        text = "更新EPG",
-                        focusRequester = epgSettingsRequester,
-                        onClick = onEpgSettingsClick
-                    )
-
-                    if (qualityMenuEnabled) {
-                        Spacer(modifier = Modifier.padding(8.dp))
-
-                        SettingsItem(
-                            text = "清晰度选择",
-                            focusRequester = qualityMenuRequester,
-                            onClick = onQualityMenuClick
+                    if (channelTitle.isNotBlank()) {
+                        Spacer(modifier = Modifier.padding(top = 4.dp))
+                        Text(
+                            text = channelTitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
                         )
                     }
-
-                    Spacer(modifier = Modifier.padding(8.dp))
-
-                    SettingsItem(
-                        text = "检查更新",
-                        focusRequester = checkUpdateRequester,
-                        onClick = onCheckUpdateClick
-                    )
+                    Spacer(modifier = Modifier.padding(top = 16.dp))
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(scrollState)
+                    ) {
+                        variants.forEachIndexed { index, variant ->
+                            QualityOptionItem(
+                                text = if (variant.selected) "${variant.label} (当前)" else variant.label,
+                                focusRequester = itemRequesters.getOrNull(index),
+                                onClick = { onSelect(index) }
+                            )
+                            Spacer(modifier = Modifier.padding(4.dp))
+                        }
+                    }
                 }
             }
         }
@@ -137,10 +133,10 @@ fun SettingsDrawer(
 }
 
 @Composable
-private fun SettingsItem(
+private fun QualityOptionItem(
     text: String,
     focusRequester: FocusRequester?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg = when {
