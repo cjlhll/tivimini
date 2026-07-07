@@ -284,8 +284,9 @@ fun VideoPlayerScreen(
     var videoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
-    var channels by remember { mutableStateOf<List<Channel>>(emptyList()) }
-    var currentIndex by remember { mutableIntStateOf(0) }
+    var channelGroups by remember { mutableStateOf<List<ChannelGroup>>(emptyList()) }
+    var currentGroupIndex by remember { mutableIntStateOf(0) }
+    var currentVariantIndex by remember { mutableIntStateOf(0) }
     var selectedGroup by remember { mutableStateOf("全部") }
     var epgData by remember { mutableStateOf<EpgData?>(null) }
     var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -299,6 +300,17 @@ fun VideoPlayerScreen(
     val drawerLogoHeightPx = remember(density) { with(density) { 40.dp.roundToPx() } }
     val bannerLogoWidthPx = remember(density) { with(density) { 80.dp.roundToPx() } }
     val bannerLogoHeightPx = remember(density) { with(density) { 50.dp.roundToPx() } }
+
+    val currentChannel = remember(channelGroups, currentGroupIndex, currentVariantIndex) {
+        channelGroups.getOrNull(currentGroupIndex)
+            ?.variants
+            ?.getOrNull(currentVariantIndex)
+            ?.channel
+    }
+
+    val allChannels = remember(channelGroups) {
+        ChannelGrouper.allChannels(channelGroups)
+    }
 
     val epgLoadTag = remember { "EPG" }
     val shouldRefreshEpg = remember { mutableStateOf(false) }
@@ -351,7 +363,7 @@ fun VideoPlayerScreen(
         if (req != null) {
              newPlayer.setMediaItem(MediaItem.fromUri(req.catchupUrl))
         } else {
-             val currentChannelUrl = channels.getOrNull(currentIndex)?.url ?: url
+             val currentChannelUrl = currentChannel?.url ?: url
              newPlayer.setMediaItem(MediaItem.fromUri(currentChannelUrl))
         }
         
@@ -461,7 +473,7 @@ fun VideoPlayerScreen(
         onSettingsDrawerOpenChanged(settingsDrawerOpen)
     }
 
-    LaunchedEffect(infoBannerOpen, currentIndex) {
+    LaunchedEffect(infoBannerOpen, currentGroupIndex, currentVariantIndex) {
         onInfoBannerOpenChanged(infoBannerOpen)
         if (infoBannerOpen) {
             delay(5000)
@@ -508,16 +520,22 @@ fun VideoPlayerScreen(
         if (!cacheFileName.isNullOrBlank()) {
             val content = withContext(Dispatchers.IO) { PlaylistCache.read(context, cacheFileName) }
             if (content != null) {
-                val (parsed, bestIndex) = withContext(Dispatchers.Default) {
+                val (parsedGroups, groupIndex, variantIndex) = withContext(Dispatchers.Default) {
                     val parsedChannels = M3uParser.parse(content)
-                    val idx = if (parsedChannels.isEmpty()) 0 else (findBestChannelIndex(parsedChannels, url, title) ?: 0)
-                    parsedChannels to idx
+                    val groups = ChannelGrouper.group(parsedChannels)
+                    val (gIdx, vIdx) = if (groups.isEmpty()) {
+                        0 to 0
+                    } else {
+                        ChannelGrouper.findBestGroupVariant(groups, url, title)
+                    }
+                    Triple(groups, gIdx, vIdx)
                 }
-                if (parsed.isNotEmpty()) {
-                    channels = parsed
-                    currentIndex = bestIndex
+                if (parsedGroups.isNotEmpty()) {
+                    channelGroups = parsedGroups
+                    currentGroupIndex = groupIndex
+                    currentVariantIndex = variantIndex
 
-                    val urls = buildPrefetchLogoUrls(parsed, bestIndex)
+                    val urls = buildPrefetchLogoUrls(displayChannelsFromGroups(parsedGroups), groupIndex)
                     scope.launch {
                         LogoLoader.prefetch(context, urls, drawerLogoWidthPx, drawerLogoHeightPx)
                     }
@@ -550,23 +568,29 @@ fun VideoPlayerScreen(
                         }
                         Prefs.setPlaylistFileName(context, fileNameToSave)
 
-                        val parsed = withContext(Dispatchers.Default) { M3uParser.parse(content) }
+                        val parsedGroups = withContext(Dispatchers.Default) {
+                            ChannelGrouper.group(M3uParser.parse(content))
+                        }
 
-                        if (parsed.isNotEmpty()) {
-                            val currentUrl = channels.getOrNull(currentIndex)?.url
-                            val newIndex = if (currentUrl != null) {
-                                parsed.indexOfFirst { it.url == currentUrl }.takeIf { it >= 0 }
-                            } else null
-
-                            channels = parsed
-                            if (newIndex != null) {
-                                currentIndex = newIndex
+                        if (parsedGroups.isNotEmpty()) {
+                            val currentUrl = currentChannel?.url
+                            val (newGroupIndex, newVariantIndex) = if (currentUrl != null) {
+                                ChannelGrouper.findBestGroupVariant(parsedGroups, currentUrl, null)
                             } else {
-                                currentIndex = currentIndex.coerceIn(0, parsed.lastIndex)
+                                currentGroupIndex to currentVariantIndex
                             }
 
-                            val idx = currentIndex
-                            val urls = buildPrefetchLogoUrls(parsed, idx)
+                            channelGroups = parsedGroups
+                            currentGroupIndex = newGroupIndex.coerceIn(0, parsedGroups.lastIndex)
+                            currentVariantIndex = newVariantIndex.coerceIn(
+                                0,
+                                parsedGroups[currentGroupIndex].variants.lastIndex
+                            )
+
+                            val urls = buildPrefetchLogoUrls(
+                                displayChannelsFromGroups(parsedGroups),
+                                currentGroupIndex
+                            )
                             scope.launch {
                                 while (!heavyWorkEnabled) delay(200)
                                 LogoLoader.prefetch(context, urls, drawerLogoWidthPx, drawerLogoHeightPx)
@@ -637,39 +661,56 @@ fun VideoPlayerScreen(
         }
     }
 
-    val groups = remember(channels) {
+    val groups = remember(channelGroups) {
         val set = LinkedHashSet<String>()
         set.add("全部")
-        for (c in channels) {
-            set.add(c.group?.takeIf { it.isNotBlank() } ?: "未分组")
+        for (group in channelGroups) {
+            set.add(group.group?.takeIf { it.isNotBlank() } ?: "未分组")
         }
         set.toList()
     }
 
-    val filteredChannels = remember(channels, selectedGroup) {
-        if (selectedGroup == "全部") channels
-        else channels.filter { (it.group?.takeIf { g -> g.isNotBlank() } ?: "未分组") == selectedGroup }
+    val filteredChannels = remember(channelGroups, selectedGroup) {
+        val display = displayChannelsFromGroups(channelGroups)
+        if (selectedGroup == "全部") display
+        else {
+            channelGroups.mapIndexedNotNull { index, group ->
+                val groupName = group.group?.takeIf { it.isNotBlank() } ?: "未分组"
+                if (groupName == selectedGroup) display.getOrNull(index) else null
+            }
+        }
     }
 
-    LaunchedEffect(epgData, nowMillis, filteredChannels) {
+    LaunchedEffect(epgData, nowMillis, channelGroups, selectedGroup) {
         val data = epgData
-        if (data == null || filteredChannels.isEmpty()) {
+        val groups = if (selectedGroup == "全部") {
+            channelGroups
+        } else {
+            channelGroups.filter {
+                (it.group?.takeIf { g -> g.isNotBlank() } ?: "未分组") == selectedGroup
+            }
+        }
+        if (data == null || groups.isEmpty()) {
             nowProgramByUrl = emptyMap()
             return@LaunchedEffect
         }
 
         val map = withContext(Dispatchers.Default) {
             buildMap {
-                for (ch in filteredChannels) {
-                    val t = data.nowProgramTitle(ch, nowMillis)
+                for (group in groups) {
+                    val displayChannel = group.defaultChannel
+                    val t = data.nowProgramTitle(displayChannel, nowMillis)
                     if (!t.isNullOrBlank()) {
-                        val current = data.nowProgram(ch, nowMillis)
+                        val current = data.nowProgram(displayChannel, nowMillis)
                         val progress = current?.let {
                             val duration = (it.endMillis - it.startMillis).toFloat()
                             if (duration <= 0f) null
                             else ((nowMillis - it.startMillis).toFloat() / duration).coerceIn(0f, 1f)
                         }
-                        put(ch.url, NowProgramUi(title = t, progress = progress))
+                        val ui = NowProgramUi(title = t, progress = progress)
+                        for (variant in group.variants) {
+                            put(variant.channel.url, ui)
+                        }
                     }
                 }
             }
@@ -677,22 +718,35 @@ fun VideoPlayerScreen(
         nowProgramByUrl = map
     }
 
-    fun playChannel(channel: Channel) {
-        val nextIndex = channels.indexOfFirst { it.url == channel.url }
-        if (nextIndex < 0) return
+    fun playGroupVariant(groupIndex: Int, variantIndex: Int) {
+        val group = channelGroups.getOrNull(groupIndex) ?: return
+        val variant = group.variants.getOrNull(variantIndex) ?: return
+        val channel = variant.channel
         catchupRequest = null
-        
+
         player?.let { p ->
             p.setMediaItem(MediaItem.fromUri(channel.url))
             p.prepare()
             p.play()
         }
-        
-        currentIndex = nextIndex
+
+        currentGroupIndex = groupIndex
+        currentVariantIndex = variantIndex
         Prefs.setLastChannel(context, channel.url, channel.title)
     }
 
-    DisposableEffect(player, channels, currentIndex, catchupRequest) {
+    fun playChannel(channel: Channel) {
+        channelGroups.forEachIndexed { groupIndex, group ->
+            group.variants.forEachIndexed { variantIndex, variant ->
+                if (variant.channel.url == channel.url) {
+                    playGroupVariant(groupIndex, variantIndex)
+                    return
+                }
+            }
+        }
+    }
+
+    DisposableEffect(player, channelGroups, currentGroupIndex, currentVariantIndex, catchupRequest) {
         setOnCatchupSeek { deltaMs ->
             val p = player ?: return@setOnCatchupSeek false
             val req = catchupRequest ?: return@setOnCatchupSeek false
@@ -706,7 +760,7 @@ fun VideoPlayerScreen(
         }
         setOnReturnToLive {
             val req = catchupRequest ?: return@setOnReturnToLive false
-            val channel = channels.firstOrNull { it.url == req.liveUrl }
+            val channel = allChannels.firstOrNull { it.url == req.liveUrl }
             if (channel != null) {
                 playChannel(channel)
             } else {
@@ -725,17 +779,16 @@ fun VideoPlayerScreen(
         }
     }
 
-    DisposableEffect(channels, currentIndex, player) {
+    DisposableEffect(channelGroups, currentGroupIndex, player) {
         setOnChannelStep { direction ->
-            if (channels.size < 2) return@setOnChannelStep false
+            if (channelGroups.size < 2) return@setOnChannelStep false
             if (drawerOpen || settingsDrawerOpen) return@setOnChannelStep false
-            val size = channels.size
-            val nextIndex = (currentIndex + direction).let { raw ->
+            val size = channelGroups.size
+            val nextGroupIndex = (currentGroupIndex + direction).let { raw ->
                 ((raw % size) + size) % size
             }
-            val channel = channels[nextIndex]
-
-            playChannel(channel)
+            val group = channelGroups[nextGroupIndex]
+            playGroupVariant(nextGroupIndex, group.defaultVariantIndex)
             infoBannerOpen = true
             true
         }
@@ -773,12 +826,17 @@ fun VideoPlayerScreen(
             groups = groups,
             selectedGroup = selectedGroup,
             channels = filteredChannels,
-            selectedChannelUrl = channels.getOrNull(currentIndex)?.url,
+            selectedChannelUrl = channelGroups.getOrNull(currentGroupIndex)?.defaultChannel?.url,
             nowProgramByChannelUrl = nowProgramByUrl,
             epgData = epgData,
             nowMillis = nowMillis,
             onSelectGroup = { selectedGroup = it },
-            onSelectChannel = { playChannel(it) },
+            onSelectChannel = { channel ->
+                val groupIndex = channelGroups.indexOfFirst { it.defaultChannel.url == channel.url }
+                if (groupIndex >= 0) {
+                    playGroupVariant(groupIndex, channelGroups[groupIndex].defaultVariantIndex)
+                }
+            },
             onPlayProgram = { req ->
                 Log.d("PlayerActivity", "onPlayProgram called with url: ${req.catchupUrl}")
                 catchupRequest = req
@@ -794,6 +852,14 @@ fun VideoPlayerScreen(
             requestedActiveColumn = drawerActiveColumn
         )
 
+        val currentGroup = channelGroups.getOrNull(currentGroupIndex)
+        val qualityVariants = currentGroup?.variants?.takeIf { it.size > 1 }?.mapIndexed { index, variant ->
+            QualityVariantUi(
+                label = variant.qualityLabel,
+                selected = index == currentVariantIndex
+            )
+        }.orEmpty()
+
         SettingsDrawer(
             visible = settingsDrawerOpen,
             onSourceConfigClick = {
@@ -804,6 +870,16 @@ fun VideoPlayerScreen(
                 shouldRefreshEpg.value = true
                 settingsDrawerOpen = false
                 android.widget.Toast.makeText(context, "开始更新EPG...", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            qualityVariants = qualityVariants,
+            onQualitySelect = { variantIndex ->
+                playGroupVariant(currentGroupIndex, variantIndex)
+                settingsDrawerOpen = false
+                android.widget.Toast.makeText(
+                    context,
+                    "已切换至 ${qualityVariants.getOrNull(variantIndex)?.label ?: ""}",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
             },
             onCheckUpdateClick = {
                 settingsDrawerOpen = false
@@ -851,9 +927,9 @@ fun VideoPlayerScreen(
                 } else null
 
                 val displayChannel = if (req != null) {
-                    channels.firstOrNull { it.url == req.liveUrl }
+                    allChannels.firstOrNull { it.url == req.liveUrl }
                 } else {
-                    channels.getOrNull(currentIndex)
+                    currentChannel
                 }
 
                 val displayTitle = if (req != null) {
@@ -869,9 +945,13 @@ fun VideoPlayerScreen(
                 }
 
                 val displayNumber = if (req != null) {
-                    if (displayChannel != null) channels.indexOf(displayChannel) + 1 else 0
+                    val liveUrl = req.liveUrl
+                    val groupIdx = channelGroups.indexOfFirst { group ->
+                        group.variants.any { it.channel.url == liveUrl }
+                    }
+                    if (groupIdx >= 0) groupIdx + 1 else 0
                 } else {
-                    currentIndex + 1
+                    currentGroupIndex + 1
                 }
 
                 ChannelInfoBanner(
@@ -888,6 +968,10 @@ fun VideoPlayerScreen(
             }
         }
     }
+}
+
+private fun displayChannelsFromGroups(groups: List<ChannelGroup>): List<Channel> {
+    return ChannelGrouper.displayChannels(groups)
 }
 
 private fun buildPrefetchLogoUrls(channels: List<Channel>, currentIndex: Int): List<String> {

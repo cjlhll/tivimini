@@ -38,11 +38,18 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 
+data class QualityVariantUi(
+    val label: String,
+    val selected: Boolean
+)
+
 @Composable
 fun SettingsDrawer(
     visible: Boolean,
     onSourceConfigClick: () -> Unit,
     onEpgSettingsClick: () -> Unit,
+    qualityVariants: List<QualityVariantUi> = emptyList(),
+    onQualitySelect: (Int) -> Unit = {},
     onCheckUpdateClick: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier
@@ -112,6 +119,26 @@ fun SettingsDrawer(
                         focusRequester = epgSettingsRequester,
                         onClick = onEpgSettingsClick
                     )
+
+                    if (qualityVariants.size > 1) {
+                        Spacer(modifier = Modifier.padding(8.dp))
+
+                        Text(
+                            text = "清晰度选择",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
+                            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+                        )
+
+                        qualityVariants.forEachIndexed { index, variant ->
+                            SettingsItem(
+                                text = if (variant.selected) "${variant.label} (当前)" else variant.label,
+                                focusRequester = null,
+                                onClick = { onQualitySelect(index) }
+                            )
+                            Spacer(modifier = Modifier.padding(4.dp))
+                        }
+                    }
 
                     Spacer(modifier = Modifier.padding(8.dp))
 

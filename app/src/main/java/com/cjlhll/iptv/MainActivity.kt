@@ -190,9 +190,14 @@ fun MainScreen() {
                             return@launch
                         }
 
+                        val groups = ChannelGrouper.group(channels)
                         val (lastUrl, lastTitle) = Prefs.getLastChannel(context)
-                        val startIndex = findBestChannelIndex(channels, lastUrl, lastTitle) ?: 0
-                        val startChannel = channels.getOrElse(startIndex) { channels.first() }
+                        val (groupIndex, variantIndex) = ChannelGrouper.findBestGroupVariant(
+                            groups,
+                            lastUrl,
+                            lastTitle
+                        )
+                        val startChannel = groups[groupIndex].variants[variantIndex].channel
 
                         Prefs.setLastChannel(context, startChannel.url, startChannel.title)
 
