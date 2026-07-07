@@ -22,37 +22,21 @@ object ChannelGrouper {
     fun group(channels: List<Channel>): List<ChannelGroup> {
         if (channels.isEmpty()) return emptyList()
 
-        val keyToGroupIndex = HashMap<String, Int>()
-        val groupedMembers = mutableListOf<MutableList<Channel>>()
-
+        val grouped = LinkedHashMap<String, MutableList<Channel>>()
         for (channel in channels) {
-            val keys = canonicalKeys(channel)
-            val existingIndex = keys.firstNotNullOfOrNull { keyToGroupIndex[it] }
-
-            if (existingIndex != null) {
-                groupedMembers[existingIndex].add(channel)
-                for (key in keys) {
-                    keyToGroupIndex[key] = existingIndex
-                }
-            } else {
-                val newIndex = groupedMembers.size
-                groupedMembers.add(mutableListOf(channel))
-                for (key in keys) {
-                    keyToGroupIndex[key] = newIndex
-                }
-            }
+            val key = primaryGroupKey(channel)
+            grouped.getOrPut(key) { mutableListOf() }.add(channel)
         }
 
-        return groupedMembers.map { members ->
+        return grouped.map { (key, members) ->
             val variants = members.mapIndexed { index, channel ->
                 ChannelVariant(channel, qualityLabel(channel, index))
             }
             val defaultIndex = variants.indexOfFirst { !it.channel.logoUrl.isNullOrBlank() }
                 .takeIf { it >= 0 } ?: 0
             val defaultChannel = variants[defaultIndex].channel
-            val allKeys = members.flatMap { canonicalKeys(it).asIterable() }.toSet()
             ChannelGroup(
-                key = pickPrimaryKey(allKeys),
+                key = key,
                 displayTitle = members.firstNotNullOfOrNull { it.tvgName?.takeIf { name -> name.isNotBlank() } }
                     ?: defaultChannel.title,
                 logoUrl = defaultChannel.logoUrl,
@@ -63,6 +47,19 @@ object ChannelGrouper {
         }
     }
 
+    fun findGroupIndexByUrl(groups: List<ChannelGroup>, url: String?): Int? {
+        if (url.isNullOrBlank()) return null
+        return groups.indexOfFirst { group ->
+            group.variants.any { it.channel.url == url }
+        }.takeIf { it >= 0 }
+    }
+
+    fun findVariantIndexByUrl(group: ChannelGroup, url: String?): Int {
+        if (url.isNullOrBlank()) return group.defaultVariantIndex
+        return group.variants.indexOfFirst { it.channel.url == url }
+            .takeIf { it >= 0 } ?: group.defaultVariantIndex
+    }
+
     fun findBestGroupVariant(
         groups: List<ChannelGroup>,
         lastUrl: String?,
@@ -71,10 +68,9 @@ object ChannelGrouper {
         if (groups.isEmpty()) return 0 to 0
 
         if (!lastUrl.isNullOrBlank()) {
-            groups.forEachIndexed { groupIndex, group ->
-                group.variants.forEachIndexed { variantIndex, variant ->
-                    if (variant.channel.url == lastUrl) return groupIndex to variantIndex
-                }
+            findGroupIndexByUrl(groups, lastUrl)?.let { groupIndex ->
+                val group = groups[groupIndex]
+                return groupIndex to findVariantIndexByUrl(group, lastUrl)
             }
         }
 
@@ -115,10 +111,22 @@ object ChannelGrouper {
         return keys
     }
 
-    private fun pickPrimaryKey(keys: Set<String>): String {
+    internal fun primaryGroupKey(channel: Channel): String {
+        channel.tvgName?.takeIf { it.isNotBlank() }?.let { name ->
+            return pickCanonicalKey(EpgNormalize.keys(name))
+        }
+        channel.tvgId?.takeIf { it.isNotBlank() }?.let { id ->
+            val base = id.substringBefore('@').trim()
+            if (base.isNotBlank()) {
+                return pickCanonicalKey(EpgNormalize.keys(base))
+            }
+        }
+        return pickCanonicalKey(EpgNormalize.keys(channel.title))
+    }
+
+    private fun pickCanonicalKey(keys: Set<String>): String {
         if (keys.isEmpty()) return "unknown"
-        val cctvKey = keys.filter { it.matches(cctvKeyRegex) }.minByOrNull { it.length }
-        if (cctvKey != null) return cctvKey
+        keys.firstOrNull { it.matches(cctvKeyRegex) }?.let { return it }
         return keys.minByOrNull { it.length } ?: keys.first()
     }
 

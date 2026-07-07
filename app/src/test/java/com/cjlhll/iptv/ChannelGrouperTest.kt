@@ -103,6 +103,56 @@ class ChannelGrouperTest {
     }
 
     @Test
+    fun cctv1AndCctv2DoNotMerge() {
+        val channels = listOf(
+            Channel(
+                title = "CCTV1",
+                url = "http://a/cctv1.m3u8",
+                logoUrl = "https://example.com/cctv1.png",
+                tvgName = "CCTV1"
+            ),
+            Channel(
+                title = "CCTV-1 (720p)",
+                url = "http://b/cctv1hd.m3u8",
+                logoUrl = "https://example.com/cctv1-720.png",
+                tvgId = "CCTV1.cn@SD"
+            ),
+            Channel(
+                title = "CCTV2",
+                url = "http://c/cctv2.m3u8",
+                logoUrl = "https://example.com/cctv2.png",
+                tvgName = "CCTV2"
+            ),
+            Channel(
+                title = "CCTV-2",
+                url = "http://d/cctv2hd.m3u8",
+                logoUrl = "https://example.com/cctv2-720.png",
+                tvgId = "CCTV2.cn@SD"
+            )
+        )
+
+        val groups = ChannelGrouper.group(channels)
+
+        assertEquals(2, groups.size)
+        assertEquals("cctv1", groups[0].key)
+        assertEquals(2, groups[0].variants.size)
+        assertEquals("cctv2", groups[1].key)
+        assertEquals(2, groups[1].variants.size)
+    }
+
+    @Test
+    fun findGroupIndexByUrlReturnsCorrectGroup() {
+        val channels = listOf(
+            Channel(title = "CCTV1", url = "http://a/cctv1.m3u8", tvgName = "CCTV1"),
+            Channel(title = "CCTV2", url = "http://b/cctv2.m3u8", tvgName = "CCTV2")
+        )
+        val groups = ChannelGrouper.group(channels)
+
+        assertEquals(0, ChannelGrouper.findGroupIndexByUrl(groups, "http://a/cctv1.m3u8"))
+        assertEquals(1, ChannelGrouper.findGroupIndexByUrl(groups, "http://b/cctv2.m3u8"))
+    }
+
+    @Test
     fun findBestGroupVariantMatchesUrlAcrossVariants() {
         val channels = listOf(
             Channel(title = "CCTV1", url = "http://a/cctv1.m3u8", tvgName = "CCTV1"),
@@ -117,6 +167,17 @@ class ChannelGrouperTest {
 
         assertEquals(0, groupIndex)
         assertEquals(1, variantIndex)
+    }
+
+    @Test
+    fun primaryGroupKeyNormalizesTvgIdToCctvNumber() {
+        val channel = Channel(
+            title = "CCTV-1 (1080p)",
+            url = "http://a/cctv1.m3u8",
+            tvgId = "CCTV1.cn@HD"
+        )
+
+        assertEquals("cctv1", ChannelGrouper.primaryGroupKey(channel))
     }
 
     @Test

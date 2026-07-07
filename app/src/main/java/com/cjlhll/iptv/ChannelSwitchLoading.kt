@@ -4,13 +4,11 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
@@ -101,47 +99,32 @@ fun ChannelSwitchOverlay(
     message: String = "加载中...",
 ) {
     val visible by controller.visibleState
-    ChannelSwitchOverlayContent(visible = visible, modifier = modifier, message = message)
-}
-
-@Composable
-private fun ChannelSwitchOverlayContent(
-    visible: Boolean,
-    modifier: Modifier = Modifier,
-    message: String = "加载中...",
-) {
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn(),
         exit = fadeOut(),
-        modifier = modifier.fillMaxSize()
+        modifier = modifier
     ) {
-        Box(
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.45f)),
-            contentAlignment = Alignment.Center
+                .background(
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    RoundedCornerShape(12.dp)
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier
-                    .background(
-                        MaterialTheme.colorScheme.surface.copy(alpha = 0.95f),
-                        RoundedCornerShape(16.dp)
-                    )
-                    .padding(horizontal = 32.dp, vertical = 24.dp)
-            ) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(48.dp)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = message,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-            }
+            CircularProgressIndicator(
+                color = MaterialTheme.colorScheme.primary,
+                strokeWidth = 2.dp,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
         }
     }
 }

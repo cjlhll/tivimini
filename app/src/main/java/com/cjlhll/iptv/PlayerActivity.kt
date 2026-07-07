@@ -291,6 +291,7 @@ fun VideoPlayerScreen(
     var drawerActiveColumn by remember { mutableStateOf<DrawerColumn?>(null) }
     var settingsDrawerOpen by remember { mutableStateOf(false) }
     var qualityDialogOpen by remember { mutableStateOf(false) }
+    var qualityDialogGroupIndex by remember { mutableIntStateOf(-1) }
     var infoBannerOpen by remember { mutableStateOf(false) }
     val channelSwitch = rememberChannelSwitchController()
     var videoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
@@ -324,6 +325,14 @@ fun VideoPlayerScreen(
         ChannelGrouper.allChannels(channelGroups)
     }
 
+    val playingGroupIndex = remember(currentChannel?.url, channelGroups, currentGroupIndex) {
+        ChannelGrouper.findGroupIndexByUrl(channelGroups, currentChannel?.url) ?: currentGroupIndex
+    }
+
+    val playingGroup = channelGroups.getOrNull(playingGroupIndex)
+    val playingVariantIndex = remember(playingGroup, currentChannel?.url) {
+        playingGroup?.let { ChannelGrouper.findVariantIndexByUrl(it, currentChannel?.url) } ?: 0
+    }
     val epgLoadTag = remember { "EPG" }
     val shouldRefreshEpg = remember { mutableStateOf(false) }
 
@@ -491,6 +500,9 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(qualityDialogOpen) {
         onQualityDialogOpenChanged(qualityDialogOpen)
+        if (!qualityDialogOpen) {
+            qualityDialogGroupIndex = -1
+        }
     }
 
     LaunchedEffect(infoBannerOpen, currentGroupIndex, currentVariantIndex) {
@@ -822,25 +834,34 @@ fun VideoPlayerScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (player != null) {
-            AndroidView(
-                modifier = Modifier.fillMaxSize(),
-                factory = {
-                    PlayerView(it).apply {
-                        this.player = player
-                        useController = false
-                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                        setKeepContentOnPlayerReset(true)
-                        setShutterBackgroundColor(Color.TRANSPARENT)
-                        keepScreenOn = true
-                        isFocusable = false
-                        isFocusableInTouchMode = false
-                        descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+            Box(modifier = Modifier.fillMaxSize()) {
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = {
+                        PlayerView(it).apply {
+                            this.player = player
+                            useController = false
+                            setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                            setKeepContentOnPlayerReset(true)
+                            setShutterBackgroundColor(Color.TRANSPARENT)
+                            keepScreenOn = true
+                            isFocusable = false
+                            isFocusableInTouchMode = false
+                            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                        }
+                    },
+                    update = {
+                        it.player = player
                     }
-                },
-                update = {
-                    it.player = player
-                }
-            )
+                )
+
+                ChannelSwitchOverlay(
+                    controller = channelSwitch,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(24.dp)
+                )
+            }
         }
 
         PlayerDrawer(
@@ -870,11 +891,18 @@ fun VideoPlayerScreen(
             requestedActiveColumn = drawerActiveColumn
         )
 
-        val currentGroup = channelGroups.getOrNull(currentGroupIndex)
-        val qualityVariants = currentGroup?.variants?.takeIf { it.size > 1 }?.mapIndexed { index, variant ->
+        val qualityDialogGroup = channelGroups.getOrNull(
+            if (qualityDialogGroupIndex >= 0) qualityDialogGroupIndex else playingGroupIndex
+        )
+        val qualityVariants = qualityDialogGroup?.variants?.takeIf { it.size > 1 }?.mapIndexed { index, variant ->
+            val selectedIndex = if (qualityDialogOpen && qualityDialogGroupIndex >= 0) {
+                ChannelGrouper.findVariantIndexByUrl(qualityDialogGroup, currentChannel?.url)
+            } else {
+                playingVariantIndex
+            }
             QualityVariantUi(
                 label = variant.qualityLabel,
-                selected = index == currentVariantIndex
+                selected = index == selectedIndex
             )
         }.orEmpty()
 
@@ -889,9 +917,10 @@ fun VideoPlayerScreen(
                 settingsDrawerOpen = false
                 android.widget.Toast.makeText(context, "开始更新EPG...", android.widget.Toast.LENGTH_SHORT).show()
             },
-            qualityMenuEnabled = qualityVariants.size > 1,
+            qualityMenuEnabled = playingGroup?.variants?.size?.let { it > 1 } == true,
             onQualityMenuClick = {
                 settingsDrawerOpen = false
+                qualityDialogGroupIndex = playingGroupIndex
                 qualityDialogOpen = true
             },
             onCheckUpdateClick = {
@@ -912,10 +941,11 @@ fun VideoPlayerScreen(
 
         QualitySelectorDialog(
             visible = qualityDialogOpen,
-            channelTitle = currentGroup?.displayTitle.orEmpty(),
+            channelTitle = qualityDialogGroup?.displayTitle.orEmpty(),
             variants = qualityVariants,
             onSelect = { variantIndex ->
-                playGroupVariant(currentGroupIndex, variantIndex)
+                val groupIndex = if (qualityDialogGroupIndex >= 0) qualityDialogGroupIndex else playingGroupIndex
+                playGroupVariant(groupIndex, variantIndex)
             },
             onClose = { qualityDialogOpen = false }
         )
@@ -990,8 +1020,6 @@ fun VideoPlayerScreen(
                 )
             }
         }
-
-        ChannelSwitchOverlay(controller = channelSwitch)
     }
 }
 
