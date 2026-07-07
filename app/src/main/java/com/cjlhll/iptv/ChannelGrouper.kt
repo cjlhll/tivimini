@@ -17,25 +17,43 @@ data class ChannelGroup(
 }
 
 object ChannelGrouper {
+    private val cctvKeyRegex = Regex("""cctv\d{1,2}\+?""")
+
     fun group(channels: List<Channel>): List<ChannelGroup> {
         if (channels.isEmpty()) return emptyList()
 
-        val grouped = LinkedHashMap<String, MutableList<Channel>>()
+        val keyToGroupIndex = HashMap<String, Int>()
+        val groupedMembers = mutableListOf<MutableList<Channel>>()
+
         for (channel in channels) {
-            val key = groupKey(channel)
-            grouped.getOrPut(key) { mutableListOf() }.add(channel)
+            val keys = canonicalKeys(channel)
+            val existingIndex = keys.firstNotNullOfOrNull { keyToGroupIndex[it] }
+
+            if (existingIndex != null) {
+                groupedMembers[existingIndex].add(channel)
+                for (key in keys) {
+                    keyToGroupIndex[key] = existingIndex
+                }
+            } else {
+                val newIndex = groupedMembers.size
+                groupedMembers.add(mutableListOf(channel))
+                for (key in keys) {
+                    keyToGroupIndex[key] = newIndex
+                }
+            }
         }
 
-        return grouped.map { (key, members) ->
+        return groupedMembers.map { members ->
             val variants = members.mapIndexed { index, channel ->
                 ChannelVariant(channel, qualityLabel(channel, index))
             }
             val defaultIndex = variants.indexOfFirst { !it.channel.logoUrl.isNullOrBlank() }
                 .takeIf { it >= 0 } ?: 0
             val defaultChannel = variants[defaultIndex].channel
+            val allKeys = members.flatMap { canonicalKeys(it).asIterable() }.toSet()
             ChannelGroup(
-                key = key,
-                displayTitle = defaultChannel.tvgName?.takeIf { it.isNotBlank() }
+                key = pickPrimaryKey(allKeys),
+                displayTitle = members.firstNotNullOfOrNull { it.tvgName?.takeIf { name -> name.isNotBlank() } }
                     ?: defaultChannel.title,
                 logoUrl = defaultChannel.logoUrl,
                 group = defaultChannel.group,
@@ -75,20 +93,33 @@ object ChannelGrouper {
     }
 
     fun displayChannels(groups: List<ChannelGroup>): List<Channel> {
-        return groups.map { it.defaultChannel }
+        return groups.map { group ->
+            val channel = group.defaultChannel
+            channel.copy(title = group.displayTitle)
+        }
     }
 
     fun allChannels(groups: List<ChannelGroup>): List<Channel> {
         return groups.flatMap { group -> group.variants.map { it.channel } }
     }
 
-    private fun groupKey(channel: Channel): String {
-        channel.tvgName?.takeIf { it.isNotBlank() }?.let { return EpgNormalize.key(it) }
+    internal fun canonicalKeys(channel: Channel): Set<String> {
+        val keys = LinkedHashSet<String>()
+        channel.tvgName?.takeIf { it.isNotBlank() }?.let { keys.addAll(EpgNormalize.keys(it)) }
         channel.tvgId?.takeIf { it.isNotBlank() }?.let { id ->
             val base = id.substringBefore('@').trim()
-            if (base.isNotBlank()) return EpgNormalize.key(base)
+            if (base.isNotBlank()) keys.addAll(EpgNormalize.keys(base))
+            keys.addAll(EpgNormalize.keys(id))
         }
-        return EpgNormalize.key(channel.title)
+        keys.addAll(EpgNormalize.keys(channel.title))
+        return keys
+    }
+
+    private fun pickPrimaryKey(keys: Set<String>): String {
+        if (keys.isEmpty()) return "unknown"
+        val cctvKey = keys.filter { it.matches(cctvKeyRegex) }.minByOrNull { it.length }
+        if (cctvKey != null) return cctvKey
+        return keys.minByOrNull { it.length } ?: keys.first()
     }
 
     private fun qualityLabel(channel: Channel, index: Int): String {
