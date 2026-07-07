@@ -210,6 +210,73 @@ class ChannelGrouperTest {
         assertEquals("CCTV1", EpgNormalize.displayName("CCTV1[1080][S]"))
         assertEquals("CCTV-1", EpgNormalize.displayName("CCTV-1 (720p)"))
         assertEquals("CCTV2", EpgNormalize.displayName("CCTV2[720][S]"))
+        assertEquals("贵州卫视", EpgNormalize.displayName("贵州卫视[F]"))
+        assertEquals("天津卫视", EpgNormalize.displayName("天津卫视"))
+    }
+
+    @Test
+    fun satelliteChannelsWithBracketFlagsMerge() {
+        val channels = listOf(
+            Channel(
+                title = "贵州卫视",
+                url = "http://a/guizhou.m3u8",
+                logoUrl = "https://example.com/guizhou.png",
+                tvgName = "贵州卫视"
+            ),
+            Channel(
+                title = "贵州卫视[F]",
+                url = "http://b/guizhou-f.m3u8",
+                tvgName = "贵州卫视"
+            )
+        )
+
+        val groups = ChannelGrouper.group(channels)
+
+        assertEquals(1, groups.size)
+        assertEquals("贵州卫视", groups.first().displayTitle)
+        assertEquals(2, groups.first().variants.size)
+    }
+
+    @Test
+    fun duplicateSatelliteChannelTitlesMerge() {
+        val channels = listOf(
+            Channel(
+                title = "天津卫视",
+                url = "http://a/tjws.m3u8",
+                logoUrl = "https://example.com/tjws.png",
+                tvgName = "天津卫视"
+            ),
+            Channel(
+                title = "天津卫视",
+                url = "http://b/tjws2.m3u8",
+                tvgName = "天津卫视"
+            )
+        )
+
+        val groups = ChannelGrouper.group(channels)
+
+        assertEquals(1, groups.size)
+        assertEquals(2, groups.first().variants.size)
+    }
+
+    @Test
+    fun satelliteWithoutTvgNameMergesByTitle() {
+        val channels = listOf(
+            Channel(
+                title = "天津卫视",
+                url = "http://a/tjws.m3u8",
+                logoUrl = "https://example.com/tjws.png",
+                tvgName = "天津卫视"
+            ),
+            Channel(
+                title = "天津卫视",
+                url = "http://b/tjws2.m3u8"
+            )
+        )
+
+        val groups = ChannelGrouper.group(channels)
+
+        assertEquals(1, groups.size)
     }
 
     @Test

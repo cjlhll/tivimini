@@ -19,6 +19,7 @@ data class ChannelGroup(
 object ChannelGrouper {
     private val cctvKeyRegex = Regex("""cctv\d{1,2}\+?""")
     private val bracketQualityRegex = Regex("""\[(\d{3,4})[pP]?\]""")
+    private val bracketFlagRegex = Regex("""\[([A-Za-z]+)\]""")
 
     fun group(channels: List<Channel>): List<ChannelGroup> {
         if (channels.isEmpty()) return emptyList()
@@ -129,15 +130,29 @@ object ChannelGrouper {
 
     internal fun mergeKeys(channel: Channel): Set<String> {
         val keys = LinkedHashSet<String>()
-        channel.tvgName?.takeIf { it.isNotBlank() }?.let { keys.addAll(EpgNormalize.keys(it)) }
+
+        val label = EpgNormalize.displayName(
+            channel.tvgName?.takeIf { it.isNotBlank() } ?: channel.title
+        )
+        keys.add(EpgNormalize.key(label))
+
+        channel.tvgName?.takeIf { it.isNotBlank() }?.let { name ->
+            keys.addAll(EpgNormalize.keys(name))
+        }
+
         channel.tvgId?.takeIf { it.isNotBlank() }?.let { id ->
             val base = id.substringBefore('@').trim()
-            if (base.isNotBlank()) keys.addAll(EpgNormalize.keys(base))
+            if (base.isNotBlank()) {
+                keys.add(EpgNormalize.key(base))
+                keys.addAll(EpgNormalize.keys(base))
+            }
         }
-        keys.addAll(EpgNormalize.keys(channel.title).filter { it.matches(cctvKeyRegex) })
-        if (keys.isEmpty()) {
-            keys.addAll(EpgNormalize.keys(channel.title))
-        }
+
+        keys.add(EpgNormalize.key(EpgNormalize.displayName(channel.title)))
+        EpgNormalize.keys(channel.title)
+            .filter { it.matches(cctvKeyRegex) }
+            .forEach { keys.add(it) }
+
         return keys.filter { it.isNotBlank() && it != "unknown" }.toSet()
     }
 
@@ -182,6 +197,8 @@ object ChannelGrouper {
         }
 
         bracketQualityRegex.find(channel.title)?.groupValues?.getOrNull(1)?.let { return "${it}p" }
+
+        bracketFlagRegex.find(channel.title)?.groupValues?.getOrNull(1)?.let { return it.uppercase() }
 
         Regex("""\((\d+[pP]|4[Kk]|HD|SD|FHD|UHD|蓝光|超清|高清|标清)\)""")
             .find(channel.title)?.groupValues?.getOrNull(1)?.let { return it }

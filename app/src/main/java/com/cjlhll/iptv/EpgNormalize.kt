@@ -1,6 +1,11 @@
 package com.cjlhll.iptv
 
 object EpgNormalize {
+    private val bracketTagRegex = Regex("""\[[^\]]*\]""")
+    private val parenQualityRegex = Regex(
+        """\((\d+[pP]|4[Kk]|HD|SD|FHD|UHD|蓝光|超清|高清|标清)\)"""
+    )
+
     private val removableTokens = listOf(
         "高清",
         "超清",
@@ -53,21 +58,16 @@ object EpgNormalize {
     }
 
     fun displayName(value: String): String {
-        var s = value.trim()
+        var s = stripBracketTags(value.trim())
         if (s.isBlank()) return s
 
-        s = s.replace(Regex("""\[\d{3,4}[pP]?\]"""), "")
-        s = s.replace(Regex("""\[[HSF]?D\]""", RegexOption.IGNORE_CASE), "")
-        s = s.replace(Regex("""\[[S]\]""", RegexOption.IGNORE_CASE), "")
-        s = s.replace(
-            Regex("""\((\d+[pP]|4[Kk]|HD|SD|FHD|UHD|蓝光|超清|高清|标清)\)"""),
-            ""
-        )
+        s = s.replace(parenQualityRegex, "")
         return s.replace(Regex("""\s+"""), " ").trim()
     }
 
     fun key(value: String): String {
-        val lowered = value
+        val cleaned = displayName(value)
+        val lowered = cleaned
             .replace('＋', '+')
             .trim()
             .lowercase()
@@ -98,16 +98,7 @@ object EpgNormalize {
             .replace("一套", "1")
             .replace("套", "")
 
-        val noQualityTags = normalizedNumbering
-            .replace(Regex("""\[\d{3,4}[pP]?\]"""), "")
-            .replace(Regex("""\[[HSF]?D\]""", RegexOption.IGNORE_CASE), "")
-
-        val noBrackets = noQualityTags
-            .replace(Regex("""[【】\[\]（）(){}<>《》]"""), "")
-            .replace(Regex("（[^）]*）"), "")
-            .replace(Regex("\\([^)]*\\)"), "")
-
-        var s = noBrackets
+        var s = normalizedNumbering
             .replace("cctv-", "cctv")
             .replace("cctv_", "cctv")
             .replace("cctv ", "cctv")
@@ -125,6 +116,14 @@ object EpgNormalize {
         }.trim()
     }
 
+    private fun stripBracketTags(value: String): String {
+        var s = value
+        repeat(3) {
+            s = s.replace(bracketTagRegex, "")
+        }
+        return s.trim()
+    }
+
     private fun extractCctvKey(normalized: String): String? {
         val m = Regex("cctv(\\d{1,2})(\\+)?").find(normalized) ?: return null
         val num = m.groupValues.getOrNull(1)?.takeIf { it.isNotBlank() } ?: return null
@@ -132,4 +131,3 @@ object EpgNormalize {
         return "cctv" + num + plus
     }
 }
-
