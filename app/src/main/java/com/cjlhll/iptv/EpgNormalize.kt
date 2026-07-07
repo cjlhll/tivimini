@@ -52,6 +52,20 @@ object EpgNormalize {
         return result
     }
 
+    fun displayName(value: String): String {
+        var s = value.trim()
+        if (s.isBlank()) return s
+
+        s = s.replace(Regex("""\[\d{3,4}[pP]?\]"""), "")
+        s = s.replace(Regex("""\[[HSF]?D\]""", RegexOption.IGNORE_CASE), "")
+        s = s.replace(Regex("""\[[S]\]""", RegexOption.IGNORE_CASE), "")
+        s = s.replace(
+            Regex("""\((\d+[pP]|4[Kk]|HD|SD|FHD|UHD|蓝光|超清|高清|标清)\)"""),
+            ""
+        )
+        return s.replace(Regex("""\s+"""), " ").trim()
+    }
+
     fun key(value: String): String {
         val lowered = value
             .replace('＋', '+')
@@ -84,7 +98,11 @@ object EpgNormalize {
             .replace("一套", "1")
             .replace("套", "")
 
-        val noBrackets = normalizedNumbering
+        val noQualityTags = normalizedNumbering
+            .replace(Regex("""\[\d{3,4}[pP]?\]"""), "")
+            .replace(Regex("""\[[HSF]?D\]""", RegexOption.IGNORE_CASE), "")
+
+        val noBrackets = noQualityTags
             .replace(Regex("""[【】\[\]（）(){}<>《》]"""), "")
             .replace(Regex("（[^）]*）"), "")
             .replace(Regex("\\([^)]*\\)"), "")

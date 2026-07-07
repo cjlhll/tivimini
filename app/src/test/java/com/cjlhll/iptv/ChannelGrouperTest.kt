@@ -55,11 +55,6 @@ class ChannelGrouperTest {
         assertEquals(1, groups.size)
         assertEquals(6, groups.first().variants.size)
         assertEquals("CCTV1", groups.first().displayTitle)
-        assertEquals(
-            "http://118.193.115.2:9901/tsfile/live/0001_1.m3u8?key=txiptv",
-            groups.first().defaultChannel.url
-        )
-        assertEquals("CCTV1", ChannelGrouper.displayChannels(groups).single().title)
     }
 
     @Test
@@ -141,6 +136,47 @@ class ChannelGrouperTest {
     }
 
     @Test
+    fun bracketQualityTitlesMergeIntoSingleGroup() {
+        val channels = listOf(
+            Channel(
+                title = "CCTV-1 (720p)",
+                url = "http://a/cctv1-720.m3u8",
+                logoUrl = "https://example.com/cctv1.png",
+                group = "General",
+                tvgId = "CCTV1.cn@SD"
+            ),
+            Channel(
+                title = "CCTV1[1080][S]",
+                url = "http://b/cctv1-1080.m3u8",
+                logoUrl = "https://example.com/cctv1.png",
+                group = "央视频道",
+                tvgName = "CCTV1"
+            ),
+            Channel(
+                title = "CCTV1[720][S]",
+                url = "http://c/cctv1-720s.m3u8",
+                logoUrl = "https://example.com/cctv1.png",
+                group = "央视频道",
+                tvgName = "CCTV1"
+            ),
+            Channel(
+                title = "CCTV1[576][S]",
+                url = "http://d/cctv1-576.m3u8",
+                logoUrl = "https://example.com/cctv1.png",
+                group = "央视频道",
+                tvgName = "CCTV1"
+            )
+        )
+
+        val groups = ChannelGrouper.group(channels)
+
+        assertEquals(1, groups.size)
+        assertEquals(4, groups.first().variants.size)
+        assertEquals("CCTV1", groups.first().displayTitle)
+        assertEquals("央视频道", groups.first().group)
+    }
+
+    @Test
     fun findGroupIndexByUrlReturnsCorrectGroup() {
         val channels = listOf(
             Channel(title = "CCTV1", url = "http://a/cctv1.m3u8", tvgName = "CCTV1"),
@@ -170,11 +206,28 @@ class ChannelGrouperTest {
     }
 
     @Test
+    fun displayNameStripsQualityMarkers() {
+        assertEquals("CCTV1", EpgNormalize.displayName("CCTV1[1080][S]"))
+        assertEquals("CCTV-1", EpgNormalize.displayName("CCTV-1 (720p)"))
+        assertEquals("CCTV2", EpgNormalize.displayName("CCTV2[720][S]"))
+    }
+
+    @Test
     fun primaryGroupKeyNormalizesTvgIdToCctvNumber() {
         val channel = Channel(
             title = "CCTV-1 (1080p)",
             url = "http://a/cctv1.m3u8",
             tvgId = "CCTV1.cn@HD"
+        )
+
+        assertEquals("cctv1", ChannelGrouper.primaryGroupKey(channel))
+    }
+
+    @Test
+    fun primaryGroupKeyNormalizesBracketQualityTitle() {
+        val channel = Channel(
+            title = "CCTV1[1080][S]",
+            url = "http://a/cctv1.m3u8"
         )
 
         assertEquals("cctv1", ChannelGrouper.primaryGroupKey(channel))

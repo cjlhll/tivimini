@@ -985,6 +985,12 @@ fun VideoPlayerScreen(
                     currentChannel
                 }
 
+                val bannerChannel = displayChannel?.let { ch ->
+                    val cleanTitle = channelGroups.getOrNull(playingGroupIndex)?.displayTitle
+                        ?: EpgNormalize.displayName(ch.title)
+                    if (cleanTitle == ch.title) ch else ch.copy(title = cleanTitle)
+                }
+
                 val displayTitle = if (req != null) {
                     "${req.programTitle} (回看中)"
                 } else {
@@ -1009,7 +1015,7 @@ fun VideoPlayerScreen(
 
                 ChannelInfoBanner(
                     visible = infoBannerOpen || isSeekOverlayVisible,
-                    channel = displayChannel,
+                    channel = bannerChannel,
                     programTitle = displayTitle,
                     programProgress = displayProgress,
                     channelNumber = displayNumber,
