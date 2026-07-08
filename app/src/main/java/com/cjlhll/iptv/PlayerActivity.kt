@@ -66,6 +66,15 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 
+private enum class PlaylistUpdateMode {
+    /** 加载缓存，仅更新频道列表，不切换播放 */
+    Initial,
+    /** 后台静默刷新，仅 URL 失效时无感切换 */
+    Background,
+    /** 播放错误恢复，切换时显示 loading */
+    Recovery,
+}
+
 class PlayerActivity : ComponentActivity() {
     private var onChannelStep: ((Int) -> Boolean)? = null
     private var setDrawerOpen: ((Boolean) -> Unit)? = null
@@ -546,18 +555,29 @@ fun VideoPlayerScreen(
     suspend fun applyPlaylistContent(
         content: String,
         preserveCurrentUrl: String?,
-        autoRecover: Boolean = false,
+        mode: PlaylistUpdateMode = PlaylistUpdateMode.Initial,
     ) {
         val previousUrl = preserveCurrentUrl ?: currentChannel?.url ?: url
+        val preserveTitle = channelGroups.getOrNull(currentGroupIndex)?.displayTitle ?: title
+        val previousGroups = channelGroups
+        val previousGroupIndex = currentGroupIndex
+
         val (parsedGroups, groupIndex, variantIndex) = withContext(Dispatchers.Default) {
             val parsedChannels = M3uParser.parse(content)
             val groups = ChannelGrouper.group(parsedChannels)
             val (gIdx, vIdx) = if (groups.isEmpty()) {
                 0 to 0
-            } else if (!previousUrl.isNullOrBlank()) {
-                ChannelGrouper.findBestGroupVariant(groups, previousUrl, title)
+            } else if (!previousUrl.isNullOrBlank() && ChannelGrouper.containsUrl(groups, previousUrl)) {
+                val gi = ChannelGrouper.findGroupIndexByUrl(groups, previousUrl)!!
+                gi to ChannelGrouper.findVariantIndexByUrl(groups[gi], previousUrl)
             } else {
-                ChannelGrouper.findBestGroupVariant(groups, url, title)
+                ChannelGrouper.findBestGroupVariant(
+                    groups,
+                    previousUrl,
+                    preserveTitle,
+                    previousGroups,
+                    previousGroupIndex,
+                )
             }
             Triple(groups, gIdx, vIdx)
         }
@@ -569,9 +589,16 @@ fun VideoPlayerScreen(
             parsedGroups[targetGroupIndex].variants.lastIndex
         )
 
-        val urlMissing = !previousUrl.isNullOrBlank() && !ChannelGrouper.containsUrl(parsedGroups, previousUrl)
-        if (autoRecover || urlMissing) {
-            ChannelGrouper.findRecoveryVariant(parsedGroups, previousUrl, title)?.let { (gIdx, vIdx) ->
+        val urlMissing = !previousUrl.isNullOrBlank() &&
+            !ChannelGrouper.containsUrl(parsedGroups, previousUrl)
+        if (urlMissing && mode != PlaylistUpdateMode.Initial) {
+            ChannelGrouper.findRecoveryVariant(
+                parsedGroups,
+                previousUrl,
+                preserveTitle,
+                previousGroups,
+                previousGroupIndex,
+            )?.let { (gIdx, vIdx) ->
                 targetGroupIndex = gIdx
                 targetVariantIndex = vIdx
             }
@@ -585,17 +612,26 @@ fun VideoPlayerScreen(
         val shouldSwitchPlayback = catchupRequest == null &&
             player != null &&
             newChannel.url != previousUrl &&
-            (autoRecover || urlMissing)
+            mode != PlaylistUpdateMode.Initial
 
         if (shouldSwitchPlayback) {
-            channelSwitch.show()
+            if (mode == PlaylistUpdateMode.Recovery) {
+                channelSwitch.show()
+            }
             player?.let { p ->
                 p.setMediaItem(MediaItem.fromUri(newChannel.url))
                 p.prepare()
                 p.play()
             }
             Prefs.setLastChannel(context, newChannel.url, newChannel.title)
-            Log.i("PlayerActivity", "recovered playback url: ${newChannel.url}")
+            Log.i(
+                "PlayerActivity",
+                if (mode == PlaylistUpdateMode.Background) {
+                    "silent recovered playback url: ${newChannel.url}"
+                } else {
+                    "recovered playback url: ${newChannel.url}"
+                }
+            )
         }
 
         while (!heavyWorkEnabled) delay(200)
@@ -620,7 +656,7 @@ fun VideoPlayerScreen(
         if (!cacheFileName.isNullOrBlank()) {
             val content = withContext(Dispatchers.IO) { PlaylistCache.read(context, cacheFileName) }
             if (content != null) {
-                applyPlaylistContent(content, preserveCurrentUrl = url, autoRecover = false)
+                applyPlaylistContent(content, preserveCurrentUrl = url, mode = PlaylistUpdateMode.Initial)
             }
         }
     }
@@ -633,7 +669,7 @@ fun VideoPlayerScreen(
             applyPlaylistContent(
                 content,
                 preserveCurrentUrl = currentChannel?.url ?: url,
-                autoRecover = true
+                mode = PlaylistUpdateMode.Background,
             )
         }
     }
@@ -648,7 +684,7 @@ fun VideoPlayerScreen(
             if (refreshed) {
                 val fileName = Prefs.getPlaylistFileName(context) ?: return@collect
                 val content = withContext(Dispatchers.IO) { PlaylistCache.read(context, fileName) } ?: return@collect
-                applyPlaylistContent(content, preserveCurrentUrl = failedUrl, autoRecover = true)
+                applyPlaylistContent(content, preserveCurrentUrl = failedUrl, mode = PlaylistUpdateMode.Recovery)
                 return@collect
             }
 

@@ -80,7 +80,9 @@ object ChannelGrouper {
     fun findBestGroupVariant(
         groups: List<ChannelGroup>,
         lastUrl: String?,
-        lastTitle: String?
+        lastTitle: String?,
+        previousGroups: List<ChannelGroup>? = null,
+        previousGroupIndex: Int? = null,
     ): Pair<Int, Int> {
         if (groups.isEmpty()) return 0 to 0
 
@@ -102,6 +104,16 @@ object ChannelGrouper {
             }
         }
 
+        if (previousGroups != null && previousGroupIndex != null) {
+            previousGroups.getOrNull(previousGroupIndex)?.let { oldGroup ->
+                groups.indexOfFirst { group ->
+                    group.key == oldGroup.key || group.displayTitle == oldGroup.displayTitle
+                }.takeIf { it >= 0 }?.let { matchedIndex ->
+                    return matchedIndex to groups[matchedIndex].defaultVariantIndex
+                }
+            }
+        }
+
         return 0 to groups.first().defaultVariantIndex
     }
 
@@ -113,19 +125,21 @@ object ChannelGrouper {
     fun findRecoveryVariant(
         groups: List<ChannelGroup>,
         failedUrl: String?,
-        lastTitle: String?
+        lastTitle: String?,
+        previousGroups: List<ChannelGroup>? = null,
+        previousGroupIndex: Int? = null,
     ): Pair<Int, Int>? {
         if (groups.isEmpty()) return null
-        val (groupIndex, currentVariantIndex) = findBestGroupVariant(groups, failedUrl, lastTitle)
+        val (groupIndex, currentVariantIndex) = findBestGroupVariant(
+            groups,
+            failedUrl,
+            lastTitle,
+            previousGroups,
+            previousGroupIndex,
+        )
         val group = groups.getOrNull(groupIndex) ?: return null
 
         if (!failedUrl.isNullOrBlank()) {
-            if (group.defaultVariantIndex != currentVariantIndex) {
-                val defaultUrl = group.variants[group.defaultVariantIndex].channel.url
-                if (defaultUrl != failedUrl) {
-                    return groupIndex to group.defaultVariantIndex
-                }
-            }
             group.variants.forEachIndexed { index, variant ->
                 if (variant.channel.url != failedUrl) {
                     return groupIndex to index

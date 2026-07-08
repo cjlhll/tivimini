@@ -333,6 +333,32 @@ class ChannelGrouperTest {
         assertEquals(0 to 1, recovery)
     }
 
+    @Test
+    fun findBestGroupVariantFallsBackToPreviousGroupWhenUrlGone() {
+        val oldChannels = listOf(
+            Channel(title = "CCTV1", url = "http://old/cctv1.m3u8", tvgName = "CCTV1"),
+            Channel(title = "CCTV2", url = "http://old/cctv2.m3u8", tvgName = "CCTV2"),
+        )
+        val oldGroups = ChannelGrouper.group(oldChannels)
+
+        val newChannels = listOf(
+            Channel(title = "CCTV1", url = "http://new/cctv1.m3u8", tvgName = "CCTV1"),
+            Channel(title = "CCTV2", url = "http://new/cctv2.m3u8", tvgName = "CCTV2"),
+        )
+        val newGroups = ChannelGrouper.group(newChannels)
+
+        val (groupIndex, variantIndex) = ChannelGrouper.findBestGroupVariant(
+            newGroups,
+            lastUrl = "http://old/cctv2.m3u8",
+            lastTitle = null,
+            previousGroups = oldGroups,
+            previousGroupIndex = 1,
+        )
+
+        assertEquals(1, groupIndex)
+        assertEquals(newGroups[1].defaultVariantIndex, variantIndex)
+    }
+
     private fun cctv2(title: String, url: String): Channel {
         return Channel(
             title = title,
