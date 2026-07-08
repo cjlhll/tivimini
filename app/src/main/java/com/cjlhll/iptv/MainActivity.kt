@@ -208,6 +208,7 @@ fun MainScreen() {
                             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_NEW_TASK)
                         }
                         context.startActivity(intent)
+                        BackgroundSourceUpdater.scheduleRefresh(context, delayMs = 3_000L)
 
                         (context as? android.app.Activity)?.finish()
                     }

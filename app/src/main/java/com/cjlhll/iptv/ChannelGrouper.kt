@@ -105,6 +105,37 @@ object ChannelGrouper {
         return 0 to groups.first().defaultVariantIndex
     }
 
+    fun containsUrl(groups: List<ChannelGroup>, url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        return groups.any { group -> group.variants.any { it.channel.url == url } }
+    }
+
+    fun findRecoveryVariant(
+        groups: List<ChannelGroup>,
+        failedUrl: String?,
+        lastTitle: String?
+    ): Pair<Int, Int>? {
+        if (groups.isEmpty()) return null
+        val (groupIndex, currentVariantIndex) = findBestGroupVariant(groups, failedUrl, lastTitle)
+        val group = groups.getOrNull(groupIndex) ?: return null
+
+        if (!failedUrl.isNullOrBlank()) {
+            if (group.defaultVariantIndex != currentVariantIndex) {
+                val defaultUrl = group.variants[group.defaultVariantIndex].channel.url
+                if (defaultUrl != failedUrl) {
+                    return groupIndex to group.defaultVariantIndex
+                }
+            }
+            group.variants.forEachIndexed { index, variant ->
+                if (variant.channel.url != failedUrl) {
+                    return groupIndex to index
+                }
+            }
+        }
+
+        return groupIndex to group.defaultVariantIndex
+    }
+
     fun displayChannels(groups: List<ChannelGroup>): List<Channel> {
         return groups.map { group ->
             val channel = group.defaultChannel

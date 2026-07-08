@@ -321,6 +321,18 @@ class ChannelGrouperTest {
         assertTrue(keysWithName.contains("cctv1"))
     }
 
+    @Test
+    fun findRecoveryVariantSkipsFailedUrl() {
+        val channels = listOf(
+            Channel(title = "天津卫视", url = "http://dead/tjws.m3u8", tvgName = "天津卫视"),
+            Channel(title = "天津卫视", url = "http://live/tjws.m3u8", tvgName = "天津卫视")
+        )
+        val groups = ChannelGrouper.group(channels)
+        val recovery = ChannelGrouper.findRecoveryVariant(groups, "http://dead/tjws.m3u8", "天津卫视")
+
+        assertEquals(0 to 1, recovery)
+    }
+
     private fun cctv2(title: String, url: String): Channel {
         return Channel(
             title = title,

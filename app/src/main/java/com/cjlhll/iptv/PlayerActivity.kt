@@ -48,11 +48,11 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.lifecycleScope
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Surface
@@ -294,6 +294,7 @@ fun VideoPlayerScreen(
     var qualityDialogGroupIndex by remember { mutableIntStateOf(-1) }
     var infoBannerOpen by remember { mutableStateOf(false) }
     val channelSwitch = rememberChannelSwitchController()
+    val playbackErrorEvents = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     var videoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
     val scope = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -442,16 +443,19 @@ fun VideoPlayerScreen(
                 }
 
                 override fun onPlayerError(error: PlaybackException) {
-                    if (retryCount >= 3) return
-                    retryCount += 1
-
-                    val current = p.currentMediaItem ?: return
-                    scope.launch {
-                        delay(800)
-                        p.setMediaItem(current)
-                        p.prepare()
-                        p.play()
+                    if (catchupRequest != null) {
+                        if (retryCount >= 3) return
+                        retryCount += 1
+                        val current = p.currentMediaItem ?: return
+                        scope.launch {
+                            delay(800)
+                            p.setMediaItem(current)
+                            p.prepare()
+                            p.play()
+                        }
+                        return
                     }
+                    playbackErrorEvents.tryEmit(Unit)
                 }
             }
 
@@ -539,10 +543,74 @@ fun VideoPlayerScreen(
         }
     }
 
+    suspend fun applyPlaylistContent(
+        content: String,
+        preserveCurrentUrl: String?,
+        autoRecover: Boolean = false,
+    ) {
+        val previousUrl = preserveCurrentUrl ?: currentChannel?.url ?: url
+        val (parsedGroups, groupIndex, variantIndex) = withContext(Dispatchers.Default) {
+            val parsedChannels = M3uParser.parse(content)
+            val groups = ChannelGrouper.group(parsedChannels)
+            val (gIdx, vIdx) = if (groups.isEmpty()) {
+                0 to 0
+            } else if (!previousUrl.isNullOrBlank()) {
+                ChannelGrouper.findBestGroupVariant(groups, previousUrl, title)
+            } else {
+                ChannelGrouper.findBestGroupVariant(groups, url, title)
+            }
+            Triple(groups, gIdx, vIdx)
+        }
+        if (parsedGroups.isEmpty()) return
+
+        var targetGroupIndex = groupIndex.coerceIn(0, parsedGroups.lastIndex)
+        var targetVariantIndex = variantIndex.coerceIn(
+            0,
+            parsedGroups[targetGroupIndex].variants.lastIndex
+        )
+
+        val urlMissing = !previousUrl.isNullOrBlank() && !ChannelGrouper.containsUrl(parsedGroups, previousUrl)
+        if (autoRecover || urlMissing) {
+            ChannelGrouper.findRecoveryVariant(parsedGroups, previousUrl, title)?.let { (gIdx, vIdx) ->
+                targetGroupIndex = gIdx
+                targetVariantIndex = vIdx
+            }
+        }
+
+        channelGroups = parsedGroups
+        currentGroupIndex = targetGroupIndex
+        currentVariantIndex = targetVariantIndex
+
+        val newChannel = parsedGroups[targetGroupIndex].variants[targetVariantIndex].channel
+        val shouldSwitchPlayback = catchupRequest == null &&
+            player != null &&
+            newChannel.url != previousUrl &&
+            (autoRecover || urlMissing)
+
+        if (shouldSwitchPlayback) {
+            channelSwitch.show()
+            player?.let { p ->
+                p.setMediaItem(MediaItem.fromUri(newChannel.url))
+                p.prepare()
+                p.play()
+            }
+            Prefs.setLastChannel(context, newChannel.url, newChannel.title)
+            Log.i("PlayerActivity", "recovered playback url: ${newChannel.url}")
+        }
+
+        while (!heavyWorkEnabled) delay(200)
+        val urls = buildPrefetchLogoUrls(displayChannelsFromGroups(parsedGroups), currentGroupIndex)
+        scope.launch {
+            LogoLoader.prefetch(context, urls, drawerLogoWidthPx, drawerLogoHeightPx)
+        }
+        scope.launch {
+            delay(800)
+            LogoLoader.prefetch(context, urls, bannerLogoWidthPx, bannerLogoHeightPx)
+        }
+    }
+
     LaunchedEffect(playlistFileName, url, title) {
         val liveSource = Prefs.getLiveSource(context)
-        val isNetworkM3u = playlistFileName.isNullOrBlank() && liveSource.isNotBlank()
-
         val cacheFileName = when {
             !playlistFileName.isNullOrBlank() -> playlistFileName
             liveSource.isNotBlank() -> PlaylistCache.fileNameForSource(liveSource)
@@ -552,88 +620,57 @@ fun VideoPlayerScreen(
         if (!cacheFileName.isNullOrBlank()) {
             val content = withContext(Dispatchers.IO) { PlaylistCache.read(context, cacheFileName) }
             if (content != null) {
-                val (parsedGroups, groupIndex, variantIndex) = withContext(Dispatchers.Default) {
-                    val parsedChannels = M3uParser.parse(content)
-                    val groups = ChannelGrouper.group(parsedChannels)
-                    val (gIdx, vIdx) = if (groups.isEmpty()) {
-                        0 to 0
-                    } else {
-                        ChannelGrouper.findBestGroupVariant(groups, url, title)
-                    }
-                    Triple(groups, gIdx, vIdx)
-                }
-                if (parsedGroups.isNotEmpty()) {
-                    channelGroups = parsedGroups
-                    currentGroupIndex = groupIndex
-                    currentVariantIndex = variantIndex
-
-                    val urls = buildPrefetchLogoUrls(displayChannelsFromGroups(parsedGroups), groupIndex)
-                    scope.launch {
-                        LogoLoader.prefetch(context, urls, drawerLogoWidthPx, drawerLogoHeightPx)
-                    }
-                    scope.launch {
-                        LogoLoader.prefetch(context, urls, bannerLogoWidthPx, bannerLogoHeightPx)
-                    }
-                }
+                applyPlaylistContent(content, preserveCurrentUrl = url, autoRecover = false)
             }
         }
+    }
 
-        if (isNetworkM3u) {
-            var lastM3uAttemptTime = 0L
-            while (true) {
-                val now = System.currentTimeMillis()
-                if (now - lastM3uAttemptTime > 30 * 60 * 1000L) {
-                    val content = withContext(Dispatchers.IO) {
-                        val client = OkHttpClient()
-                        val request = Request.Builder().url(liveSource).build()
-                        try {
-                            client.newCall(request).execute().use { response ->
-                                if (response.isSuccessful) response.body?.string() else null
-                            }
-                        } catch (e: Exception) { null }
+    LaunchedEffect(Unit) {
+        BackgroundSourceUpdater.playlistUpdated.collectLatest { fileName ->
+            val expected = Prefs.getPlaylistFileName(context) ?: return@collectLatest
+            if (fileName != expected) return@collectLatest
+            val content = withContext(Dispatchers.IO) { PlaylistCache.read(context, fileName) } ?: return@collectLatest
+            applyPlaylistContent(
+                content,
+                preserveCurrentUrl = currentChannel?.url ?: url,
+                autoRecover = true
+            )
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        playbackErrorEvents.collect {
+            if (catchupRequest != null) return@collect
+            val failedUrl = currentChannel?.url ?: url
+            channelSwitch.show()
+
+            val refreshed = BackgroundSourceUpdater.refreshPlaylistUrgent(context)
+            if (refreshed) {
+                val fileName = Prefs.getPlaylistFileName(context) ?: return@collect
+                val content = withContext(Dispatchers.IO) { PlaylistCache.read(context, fileName) } ?: return@collect
+                applyPlaylistContent(content, preserveCurrentUrl = failedUrl, autoRecover = true)
+                return@collect
+            }
+
+            val group = channelGroups.getOrNull(currentGroupIndex) ?: return@collect
+            val variants = group.variants
+            if (variants.size <= 1) return@collect
+            val start = (currentVariantIndex + 1) % variants.size
+            for (offset in variants.indices) {
+                val idx = (start + offset) % variants.size
+                val variant = variants[idx]
+                if (variant.channel.url != failedUrl) {
+                    val ch = variant.channel
+                    catchupRequest = null
+                    player?.let { p ->
+                        p.setMediaItem(MediaItem.fromUri(ch.url))
+                        p.prepare()
+                        p.play()
                     }
-
-                    if (content != null) {
-                        val fileNameToSave = PlaylistCache.fileNameForSource(liveSource)
-                        withContext(Dispatchers.IO) {
-                            PlaylistCache.write(context, fileNameToSave, content)
-                        }
-                        Prefs.setPlaylistFileName(context, fileNameToSave)
-
-                        val parsedGroups = withContext(Dispatchers.Default) {
-                            ChannelGrouper.group(M3uParser.parse(content))
-                        }
-
-                        if (parsedGroups.isNotEmpty()) {
-                            val currentUrl = currentChannel?.url
-                            val (newGroupIndex, newVariantIndex) = if (currentUrl != null) {
-                                ChannelGrouper.findBestGroupVariant(parsedGroups, currentUrl, null)
-                            } else {
-                                currentGroupIndex to currentVariantIndex
-                            }
-
-                            channelGroups = parsedGroups
-                            currentGroupIndex = newGroupIndex.coerceIn(0, parsedGroups.lastIndex)
-                            currentVariantIndex = newVariantIndex.coerceIn(
-                                0,
-                                parsedGroups[currentGroupIndex].variants.lastIndex
-                            )
-
-                            val urls = buildPrefetchLogoUrls(
-                                displayChannelsFromGroups(parsedGroups),
-                                currentGroupIndex
-                            )
-                            scope.launch {
-                                while (!heavyWorkEnabled) delay(200)
-                                LogoLoader.prefetch(context, urls, drawerLogoWidthPx, drawerLogoHeightPx)
-                                delay(800)
-                                LogoLoader.prefetch(context, urls, bannerLogoWidthPx, bannerLogoHeightPx)
-                            }
-                        }
-                    }
-                    lastM3uAttemptTime = now
+                    currentVariantIndex = idx
+                    Prefs.setLastChannel(context, ch.url, ch.title)
+                    return@collect
                 }
-                delay(10_000L)
             }
         }
     }
@@ -647,10 +684,17 @@ fun VideoPlayerScreen(
                 Log.i(epgLoadTag, "cache loaded. programs=${cachedEpg.programsByChannelId.size}")
             }
 
-            var lastAttemptTime = 0L
+            launch {
+                BackgroundSourceUpdater.epgUpdated.collect { data ->
+                    epgData = data
+                    Log.i(epgLoadTag, "background updated. programs=${data.programsByChannelId.size}")
+                }
+            }
+
+            var lastAttemptTime = System.currentTimeMillis()
             while (true) {
                 val now = System.currentTimeMillis()
-                
+
                 if (!shouldRefreshEpg.value && (now - lastAttemptTime < 5 * 60 * 1000L)) {
                     delay(10_000L)
                     continue
