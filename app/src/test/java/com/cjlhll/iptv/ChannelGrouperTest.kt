@@ -359,6 +359,59 @@ class ChannelGrouperTest {
         assertEquals(newGroups[1].defaultVariantIndex, variantIndex)
     }
 
+    @Test
+    fun resolveGroupInfersCctvWhenGroupTitleMissing() {
+        val channel = Channel(
+            title = "CCTV-16 (1080p)",
+            url = "http://a/cctv16.m3u8",
+            tvgId = "CCTV16.cn@HD",
+        )
+
+        assertEquals("央视频道", ChannelGrouper.resolveGroup(channel))
+    }
+
+    @Test
+    fun resolveGroupNormalizesGeneralAndCctvAliasGroups() {
+        val general = Channel(
+            title = "CCTV-1 (720p)",
+            url = "http://a/cctv1.m3u8",
+            group = "General",
+            tvgId = "CCTV1.cn@SD",
+        )
+        val cctvStation = Channel(
+            title = "CCTV-4 中文国际",
+            url = "http://a/cctv4.m3u8",
+            group = "央视台",
+            tvgId = "CCTV-4",
+        )
+        val sports = Channel(
+            title = "CCTV5",
+            url = "http://a/cctv5.m3u8",
+            group = "体育频道",
+            tvgName = "CCTV5",
+        )
+
+        assertEquals("央视频道", ChannelGrouper.resolveGroup(general))
+        assertEquals("央视频道", ChannelGrouper.resolveGroup(cctvStation))
+        assertEquals("央视频道", ChannelGrouper.resolveGroup(sports))
+    }
+
+    @Test
+    fun groupAssignsCctv16ToCctvGroupWhenOnlySourceHasNoGroupTitle() {
+        val channels = listOf(
+            Channel(
+                title = "CCTV-16 (1080p)",
+                url = "http://74.91.26.218:82/live/cctv16hd.m3u8",
+                tvgId = "CCTV16.cn@HD",
+            )
+        )
+
+        val groups = ChannelGrouper.group(channels)
+
+        assertEquals(1, groups.size)
+        assertEquals("央视频道", groups.first().group)
+    }
+
     private fun cctv2(title: String, url: String): Channel {
         return Channel(
             title = title,

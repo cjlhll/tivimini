@@ -18,8 +18,16 @@ data class ChannelGroup(
 
 object ChannelGrouper {
     private val cctvKeyRegex = Regex("""cctv\d{1,2}\+?""")
+    private val cctvInferRegex = Regex("""(?i)cctv[\s\-]?(\d{1,2}\+?|4k?)""")
+    private val cctvTvgIdRegex = Regex("""(?i)^cctv(\d{1,2}\+?)""")
+    private val satelliteRegex = Regex("""卫视$""")
+    private val cartoonNameRegex = Regex("""(?i)(金鹰卡通|卡酷|嘉佳|优漫|哈哈|炫动|CCTV14|CCTV-14)""")
+    private val otherChannelRegex = Regex("""(?i)^凤凰""")
+    private val cctvCartoonNumbers = setOf("14")
     private val bracketQualityRegex = Regex("""\[(\d{3,4})[pP]?\]""")
     private val bracketFlagRegex = Regex("""\[([A-Za-z]+)\]""")
+
+    private val groupSortOrder = listOf("央视频道", "卫视频道", "卡通频道", "其他频道", "未分组")
 
     fun group(channels: List<Channel>): List<ChannelGroup> {
         if (channels.isEmpty()) return emptyList()
@@ -57,7 +65,7 @@ object ChannelGrouper {
                 key = pickPrimaryKey(allKeys),
                 displayTitle = displayTitleForGroup(members, defaultChannel),
                 logoUrl = defaultChannel.logoUrl,
-                group = pickGroupTitle(members) ?: defaultChannel.group,
+                group = pickGroupTitle(members) ?: resolveGroup(defaultChannel),
                 variants = variants,
                 defaultVariantIndex = defaultIndex
             )
@@ -150,6 +158,26 @@ object ChannelGrouper {
         return groupIndex to group.defaultVariantIndex
     }
 
+    fun displayGroupName(group: ChannelGroup): String {
+        return group.group?.takeIf { it.isNotBlank() } ?: "未分组"
+    }
+
+    fun sortedDrawerGroups(channelGroups: List<ChannelGroup>): List<String> {
+        val names = LinkedHashSet<String>()
+        for (group in channelGroups) {
+            names.add(displayGroupName(group))
+        }
+        val ordered = groupSortOrder.filter { it in names }
+        val rest = names.filter { it !in groupSortOrder }.sorted()
+        return listOf("全部") + ordered + rest
+    }
+
+    internal fun resolveGroup(channel: Channel): String? {
+        val raw = channel.group?.trim()?.takeIf { it.isNotBlank() }
+        raw?.let { normalizeGroupAlias(it, channel) }?.let { return it }
+        return inferGroupFromMetadata(channel)
+    }
+
     fun displayChannels(groups: List<ChannelGroup>): List<Channel> {
         return groups.map { group ->
             val channel = group.defaultChannel
@@ -218,7 +246,7 @@ object ChannelGrouper {
     }
 
     private fun pickGroupTitle(members: List<Channel>): String? {
-        val groups = members.mapNotNull { it.group?.takeIf { name -> name.isNotBlank() } }
+        val groups = members.mapNotNull { resolveGroup(it) }
         if (groups.isEmpty()) return null
         return groups
             .groupingBy { it }
@@ -226,11 +254,59 @@ object ChannelGrouper {
             .entries
             .sortedWith(
                 compareByDescending<Map.Entry<String, Int>> { it.value }
-                    .thenBy { if (it.key.equals("General", ignoreCase = true)) 1 else 0 }
+                    .thenBy { groupSortOrder.indexOf(it.key).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
                     .thenBy { it.key }
             )
             .firstOrNull()
             ?.key
+    }
+
+    private fun normalizeGroupAlias(raw: String, channel: Channel): String? {
+        if (raw.equals("General", ignoreCase = true)) {
+            return inferGroupFromMetadata(channel)
+        }
+        if (raw == "央视台") return "央视频道"
+        if (raw == "体育频道" && isCctvChannel(channel)) return "央视频道"
+        return raw
+    }
+
+    private fun inferGroupFromMetadata(channel: Channel): String? {
+        val texts = listOfNotNull(
+            channel.tvgId?.substringBefore('@')?.trim()?.takeIf { it.isNotBlank() },
+            channel.tvgName?.trim()?.takeIf { it.isNotBlank() },
+            channel.title.trim().takeIf { it.isNotBlank() },
+        )
+        for (text in texts) {
+            if (cartoonNameRegex.containsMatchIn(text) || cctvCartoonNumber(text) != null) {
+                return "卡通频道"
+            }
+            if (otherChannelRegex.containsMatchIn(text)) {
+                return "其他频道"
+            }
+            if (isCctvText(text)) {
+                return "央视频道"
+            }
+            val display = EpgNormalize.displayName(text)
+            if (satelliteRegex.containsMatchIn(display)) {
+                return "卫视频道"
+            }
+        }
+        return null
+    }
+
+    private fun isCctvChannel(channel: Channel): Boolean {
+        return listOfNotNull(channel.tvgId, channel.tvgName, channel.title).any { isCctvText(it) }
+    }
+
+    private fun isCctvText(text: String): Boolean {
+        if (cctvTvgIdRegex.containsMatchIn(text.substringBefore('.'))) return true
+        return cctvInferRegex.containsMatchIn(text)
+    }
+
+    private fun cctvCartoonNumber(text: String): String? {
+        val number = cctvTvgIdRegex.find(text.substringBefore('.'))?.groupValues?.getOrNull(1)
+            ?: cctvInferRegex.find(text)?.groupValues?.getOrNull(1)
+        return number?.removeSuffix("+")?.takeIf { it in cctvCartoonNumbers }
     }
 
     private fun qualityLabel(channel: Channel, index: Int): String {

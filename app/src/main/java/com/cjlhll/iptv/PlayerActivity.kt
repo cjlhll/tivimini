@@ -774,12 +774,7 @@ fun VideoPlayerScreen(
     }
 
     val groups = remember(channelGroups) {
-        val set = LinkedHashSet<String>()
-        set.add("全部")
-        for (group in channelGroups) {
-            set.add(group.group?.takeIf { it.isNotBlank() } ?: "未分组")
-        }
-        set.toList()
+        ChannelGrouper.sortedDrawerGroups(channelGroups)
     }
 
     val filteredChannels = remember(channelGroups, selectedGroup) {
@@ -787,8 +782,7 @@ fun VideoPlayerScreen(
         if (selectedGroup == "全部") display
         else {
             channelGroups.mapIndexedNotNull { index, group ->
-                val groupName = group.group?.takeIf { it.isNotBlank() } ?: "未分组"
-                if (groupName == selectedGroup) display.getOrNull(index) else null
+                if (ChannelGrouper.displayGroupName(group) == selectedGroup) display.getOrNull(index) else null
             }
         }
     }
@@ -799,7 +793,7 @@ fun VideoPlayerScreen(
             channelGroups
         } else {
             channelGroups.filter {
-                (it.group?.takeIf { g -> g.isNotBlank() } ?: "未分组") == selectedGroup
+                ChannelGrouper.displayGroupName(it) == selectedGroup
             }
         }
         if (data == null || groups.isEmpty()) {
