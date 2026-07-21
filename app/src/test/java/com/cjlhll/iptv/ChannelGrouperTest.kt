@@ -413,25 +413,6 @@ class ChannelGrouperTest {
     }
 
     @Test
-    fun pickBestVariantIndexUsesMeasuredLatency() {
-        val channels = listOf(
-            Channel(title = "CCTV1", url = "http://a/slow.m3u8", tvgName = "CCTV1", logoUrl = "https://x/a.png"),
-            Channel(title = "CCTV1", url = "http://a/fast.m3u8", tvgName = "CCTV1"),
-            Channel(title = "CCTV1", url = "http://a/mid.m3u8", tvgName = "CCTV1"),
-        )
-        val groups = ChannelGrouper.group(channels)
-        val best = ChannelGrouper.pickBestVariantIndex(
-            groups.single().variants,
-            mapOf(
-                "http://a/slow.m3u8" to 180,
-                "http://a/fast.m3u8" to 28,
-                "http://a/mid.m3u8" to 90,
-            )
-        )
-        assertEquals(1, best)
-    }
-
-    @Test
     fun parseResponseTimeMsFromM3uAttribute() {
         assertEquals(120, M3uParser.parseResponseTimeMs("120ms"))
         assertEquals(45, M3uParser.parseResponseTimeMs("45ms"))

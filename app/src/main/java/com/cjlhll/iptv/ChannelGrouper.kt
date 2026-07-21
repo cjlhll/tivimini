@@ -74,19 +74,6 @@ object ChannelGrouper {
         }
     }
 
-    fun pickBestVariantIndex(
-        variants: List<ChannelVariant>,
-        measuredLatencyMs: Map<String, Int?>,
-    ): Int {
-        if (variants.isEmpty()) return 0
-        SourceLatencyProber.pickBestIndex(
-            urls = variants.map { it.channel.url },
-            measured = measuredLatencyMs,
-        )?.let { return it }
-        return variants.indexOfFirst { !it.channel.logoUrl.isNullOrBlank() }
-            .takeIf { it >= 0 } ?: 0
-    }
-
     fun findGroupIndexByUrl(groups: List<ChannelGroup>, url: String?): Int? {
         if (url.isNullOrBlank()) return null
         return groups.indexOfFirst { group ->

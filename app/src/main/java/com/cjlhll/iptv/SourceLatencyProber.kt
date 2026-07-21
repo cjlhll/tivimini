@@ -77,23 +77,6 @@ object SourceLatencyProber {
         }.awaitAll().toMap()
     }
 
-    fun pickBestIndex(
-        urls: List<String>,
-        measured: Map<String, Int?> = emptyMap(),
-    ): Int? {
-        if (urls.isEmpty()) return null
-        var bestIndex: Int? = null
-        var bestMs = Int.MAX_VALUE
-        urls.forEachIndexed { index, url ->
-            val ms = measured[url] ?: cachedLatencyMs(url) ?: return@forEachIndexed
-            if (ms < bestMs) {
-                bestMs = ms
-                bestIndex = index
-            }
-        }
-        return bestIndex
-    }
-
     private fun measure(url: String): Int? {
         val startNs = System.nanoTime()
         val ok = runCatching { tryHead(url) }.getOrDefault(false) ||

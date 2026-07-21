@@ -55,7 +55,6 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
@@ -872,43 +871,56 @@ fun VideoPlayerScreen(
     }
 
     /**
-     * 切台：优先用缓存测速选最快源；无缓存则先播默认源并并行测速，测完后切到更快可用源。
+     * 切台：按源列表顺序探测，第一个能连上的就用；都失败则仍播第一个。
      */
     fun playGroupAuto(groupIndex: Int) {
         val group = channelGroups.getOrNull(groupIndex) ?: return
-        val urls = group.variants.map { it.channel.url }
+        if (group.variants.isEmpty()) return
+
         val generation = sourceSelectGeneration + 1
         sourceSelectGeneration = generation
         sourceSelectJob?.cancel()
 
-        val cachedBest = ChannelGrouper.pickBestVariantIndex(
-            group.variants,
-            urls.associateWith { SourceLatencyProber.cachedLatencyMs(it) },
-        )
-        val hasCached = urls.any { SourceLatencyProber.hasFreshCache(it) && SourceLatencyProber.cachedLatencyMs(it) != null }
-        val startIndex = if (hasCached) cachedBest else group.defaultVariantIndex
-        playGroupVariant(groupIndex, startIndex)
+        channelSwitch.show()
+        currentGroupIndex = groupIndex
 
         sourceSelectJob = scope.launch {
-            probingUrls = probingUrls + urls
-            val results = withTimeoutOrNull(2_500) {
-                SourceLatencyProber.probeAll(urls, force = false)
-            } ?: emptyMap()
-            if (generation != sourceSelectGeneration) {
-                probingUrls = probingUrls - urls.toSet()
-                return@launch
+            var selectedIndex = 0
+            for ((index, variant) in group.variants.withIndex()) {
+                if (generation != sourceSelectGeneration) return@launch
+                val url = variant.channel.url
+                val reachable = when {
+                    SourceLatencyProber.hasFreshCache(url) -> {
+                        val ms = SourceLatencyProber.cachedLatencyMs(url)
+                        if (ms != null) {
+                            mergeMeasuredLatencies(mapOf(url to ms))
+                        }
+                        ms != null
+                    }
+                    else -> {
+                        probingUrls = probingUrls + url
+                        val ms = SourceLatencyProber.probe(url)
+                        mergeMeasuredLatencies(mapOf(url to ms))
+                        probingUrls = probingUrls - url
+                        ms != null
+                    }
+                }
+                if (reachable) {
+                    selectedIndex = index
+                    break
+                }
             }
-            mergeMeasuredLatencies(results)
-            probingUrls = probingUrls - urls.toSet()
 
-            val bestIndex = ChannelGrouper.pickBestVariantIndex(group.variants, results)
-            val bestMs = results[group.variants.getOrNull(bestIndex)?.channel?.url]
-            val currentMs = results[group.variants.getOrNull(currentVariantIndex)?.channel?.url]
-            if (currentGroupIndex != groupIndex) return@launch
-            if (bestMs == null) return@launch
-            if (bestIndex == currentVariantIndex) return@launch
-            if (currentMs != null && bestMs >= currentMs) return@launch
-            playGroupVariant(groupIndex, bestIndex)
+            if (generation != sourceSelectGeneration) return@launch
+            playGroupVariant(groupIndex, selectedIndex)
+
+            val unchecked = group.variants.map { it.channel.url }
+                .filter { !SourceLatencyProber.hasFreshCache(it) }
+            if (unchecked.isNotEmpty() && generation == sourceSelectGeneration) {
+                probingUrls = probingUrls + unchecked
+                mergeMeasuredLatencies(SourceLatencyProber.probeAll(unchecked))
+                probingUrls = probingUrls - unchecked.toSet()
+            }
         }
     }
 
