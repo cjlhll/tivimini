@@ -54,16 +54,14 @@ object ChannelGrouper {
         }
 
         return groupedMembers.map { members ->
-            val sortedMembers = members.sortedWith(
-                compareBy<Channel> { it.responseTimeMs ?: Int.MAX_VALUE }
-                    .thenBy { if (it.logoUrl.isNullOrBlank()) 1 else 0 }
-            )
-            val variants = sortedMembers.mapIndexed { index, channel ->
+            // 不信任 M3U response-time（大量占位 120ms）；默认优先带 logo 的源
+            val variants = members.mapIndexed { index, channel ->
                 ChannelVariant(channel, sourceLabel(channel, index))
             }
-            val defaultIndex = pickLowestLatencyIndex(variants)
+            val defaultIndex = variants.indexOfFirst { !it.channel.logoUrl.isNullOrBlank() }
+                .takeIf { it >= 0 } ?: 0
             val defaultChannel = variants[defaultIndex].channel
-            val logoUrl = sortedMembers.firstNotNullOfOrNull { it.logoUrl?.takeIf { url -> url.isNotBlank() } }
+            val logoUrl = members.firstNotNullOfOrNull { it.logoUrl?.takeIf { url -> url.isNotBlank() } }
             val allKeys = members.flatMap { mergeKeys(it).asIterable() }.toSet()
             ChannelGroup(
                 key = pickPrimaryKey(allKeys),
@@ -76,13 +74,17 @@ object ChannelGrouper {
         }
     }
 
-    internal fun pickLowestLatencyIndex(variants: List<ChannelVariant>): Int {
+    fun pickBestVariantIndex(
+        variants: List<ChannelVariant>,
+        measuredLatencyMs: Map<String, Int?>,
+    ): Int {
         if (variants.isEmpty()) return 0
-        return variants.indices.minWithOrNull(
-            compareBy<Int> { variants[it].channel.responseTimeMs ?: Int.MAX_VALUE }
-                .thenBy { if (variants[it].channel.logoUrl.isNullOrBlank()) 1 else 0 }
-                .thenBy { it }
-        ) ?: 0
+        SourceLatencyProber.pickBestIndex(
+            urls = variants.map { it.channel.url },
+            measured = measuredLatencyMs,
+        )?.let { return it }
+        return variants.indexOfFirst { !it.channel.logoUrl.isNullOrBlank() }
+            .takeIf { it >= 0 } ?: 0
     }
 
     fun findGroupIndexByUrl(groups: List<ChannelGroup>, url: String?): Int? {

@@ -22,6 +22,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.shape.CircleShape
@@ -47,11 +49,13 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.lifecycle.lifecycleScope
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.MaterialTheme
@@ -305,7 +309,11 @@ fun VideoPlayerScreen(
     val channelSwitch = rememberChannelSwitchController()
     val playbackErrorEvents = remember { MutableSharedFlow<Unit>(extraBufferCapacity = 1) }
     var videoFormat by remember { mutableStateOf<androidx.media3.common.Format?>(null) }
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val scope = rememberCoroutineScope()
+    var measuredLatencyByUrl by remember { mutableStateOf<Map<String, Int?>>(emptyMap()) }
+    var probingUrls by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var sourceSelectGeneration by remember { mutableIntStateOf(0) }
+    var sourceSelectJob by remember { mutableStateOf<Job?>(null) }
 
     var channelGroups by remember { mutableStateOf<List<ChannelGroup>>(emptyList()) }
     var currentGroupIndex by remember { mutableIntStateOf(0) }
@@ -847,13 +855,70 @@ fun VideoPlayerScreen(
         Prefs.setLastChannel(context, channel.url, channel.title)
     }
 
+    fun mergeMeasuredLatencies(results: Map<String, Int?>) {
+        if (results.isEmpty()) return
+        measuredLatencyByUrl = measuredLatencyByUrl + results
+    }
+
+    fun refreshGroupLatencies(group: ChannelGroup, force: Boolean = false) {
+        val urls = group.variants.map { it.channel.url }
+        if (urls.isEmpty()) return
+        probingUrls = probingUrls + urls
+        scope.launch {
+            val results = SourceLatencyProber.probeAll(urls, force = force)
+            mergeMeasuredLatencies(results)
+            probingUrls = probingUrls - urls.toSet()
+        }
+    }
+
+    /**
+     * 切台：优先用缓存测速选最快源；无缓存则先播默认源并并行测速，测完后切到更快可用源。
+     */
+    fun playGroupAuto(groupIndex: Int) {
+        val group = channelGroups.getOrNull(groupIndex) ?: return
+        val urls = group.variants.map { it.channel.url }
+        val generation = sourceSelectGeneration + 1
+        sourceSelectGeneration = generation
+        sourceSelectJob?.cancel()
+
+        val cachedBest = ChannelGrouper.pickBestVariantIndex(
+            group.variants,
+            urls.associateWith { SourceLatencyProber.cachedLatencyMs(it) },
+        )
+        val hasCached = urls.any { SourceLatencyProber.hasFreshCache(it) && SourceLatencyProber.cachedLatencyMs(it) != null }
+        val startIndex = if (hasCached) cachedBest else group.defaultVariantIndex
+        playGroupVariant(groupIndex, startIndex)
+
+        sourceSelectJob = scope.launch {
+            probingUrls = probingUrls + urls
+            val results = withTimeoutOrNull(2_500) {
+                SourceLatencyProber.probeAll(urls, force = false)
+            } ?: emptyMap()
+            if (generation != sourceSelectGeneration) {
+                probingUrls = probingUrls - urls.toSet()
+                return@launch
+            }
+            mergeMeasuredLatencies(results)
+            probingUrls = probingUrls - urls.toSet()
+
+            val bestIndex = ChannelGrouper.pickBestVariantIndex(group.variants, results)
+            val bestMs = results[group.variants.getOrNull(bestIndex)?.channel?.url]
+            val currentMs = results[group.variants.getOrNull(currentVariantIndex)?.channel?.url]
+            if (currentGroupIndex != groupIndex) return@launch
+            if (bestMs == null) return@launch
+            if (bestIndex == currentVariantIndex) return@launch
+            if (currentMs != null && bestMs >= currentMs) return@launch
+            playGroupVariant(groupIndex, bestIndex)
+        }
+    }
+
     fun playChannel(channel: Channel) {
         channelGroups.forEachIndexed { groupIndex, group ->
-            group.variants.forEachIndexed { variantIndex, variant ->
-                if (variant.channel.url == channel.url) {
-                    playGroupVariant(groupIndex, variantIndex)
-                    return
-                }
+            if (group.defaultChannel.url == channel.url ||
+                group.variants.any { it.channel.url == channel.url }
+            ) {
+                playGroupAuto(groupIndex)
+                return
             }
         }
     }
@@ -887,16 +952,24 @@ fun VideoPlayerScreen(
         }
     }
 
-    DisposableEffect(channelGroups, currentGroupIndex, player) {
+    val channelGroupsState = rememberUpdatedState(channelGroups)
+    val currentGroupIndexState = rememberUpdatedState(currentGroupIndex)
+    val drawerOpenState = rememberUpdatedState(drawerOpen)
+    val settingsDrawerOpenState = rememberUpdatedState(settingsDrawerOpen)
+    val qualityDialogOpenState = rememberUpdatedState(qualityDialogOpen)
+    val playGroupAutoState = rememberUpdatedState<(Int) -> Unit> { index -> playGroupAuto(index) }
+
+    DisposableEffect(player) {
         setOnChannelStep { direction ->
-            if (channelGroups.size < 2) return@setOnChannelStep false
-            if (drawerOpen || settingsDrawerOpen || qualityDialogOpen) return@setOnChannelStep false
-            val size = channelGroups.size
-            val nextGroupIndex = (currentGroupIndex + direction).let { raw ->
-                ((raw % size) + size) % size
+            val groups = channelGroupsState.value
+            if (groups.size < 2) return@setOnChannelStep false
+            if (drawerOpenState.value || settingsDrawerOpenState.value || qualityDialogOpenState.value) {
+                return@setOnChannelStep false
             }
-            val group = channelGroups[nextGroupIndex]
-            playGroupVariant(nextGroupIndex, group.defaultVariantIndex)
+            val size = groups.size
+            val current = currentGroupIndexState.value
+            val nextGroupIndex = ((current + direction) % size + size) % size
+            playGroupAutoState.value(nextGroupIndex)
             infoBannerOpen = true
             true
         }
@@ -949,10 +1022,7 @@ fun VideoPlayerScreen(
             nowMillis = nowMillis,
             onSelectGroup = { selectedGroup = it },
             onSelectChannel = { channel ->
-                val groupIndex = channelGroups.indexOfFirst { it.defaultChannel.url == channel.url }
-                if (groupIndex >= 0) {
-                    playGroupVariant(groupIndex, channelGroups[groupIndex].defaultVariantIndex)
-                }
+                playChannel(channel)
             },
             onPlayProgram = { req ->
                 Log.d("PlayerActivity", "onPlayProgram called with url: ${req.catchupUrl}")
@@ -974,12 +1044,22 @@ fun VideoPlayerScreen(
             } else {
                 playingVariantIndex
             }
+            val url = variant.channel.url
             SourceVariantUi(
                 label = variant.qualityLabel,
-                latencyMs = variant.channel.responseTimeMs,
+                latencyMs = measuredLatencyByUrl[url] ?: SourceLatencyProber.cachedLatencyMs(url),
+                probing = url in probingUrls,
                 selected = index == selectedIndex
             )
         }.orEmpty()
+
+        LaunchedEffect(qualityDialogOpen, qualityDialogGroupIndex, playingGroupIndex) {
+            if (!qualityDialogOpen) return@LaunchedEffect
+            val group = channelGroups.getOrNull(
+                if (qualityDialogGroupIndex >= 0) qualityDialogGroupIndex else playingGroupIndex
+            ) ?: return@LaunchedEffect
+            refreshGroupLatencies(group, force = true)
+        }
 
         SettingsDrawer(
             visible = settingsDrawerOpen,
@@ -1019,6 +1099,8 @@ fun VideoPlayerScreen(
             channelTitle = qualityDialogGroup?.displayTitle.orEmpty(),
             variants = qualityVariants,
             onSelect = { variantIndex ->
+                sourceSelectGeneration += 1
+                sourceSelectJob?.cancel()
                 val groupIndex = if (qualityDialogGroupIndex >= 0) qualityDialogGroupIndex else playingGroupIndex
                 playGroupVariant(groupIndex, variantIndex)
             },

@@ -413,40 +413,22 @@ class ChannelGrouperTest {
     }
 
     @Test
-    fun defaultVariantPicksLowestResponseTime() {
+    fun pickBestVariantIndexUsesMeasuredLatency() {
         val channels = listOf(
-            Channel(
-                title = "CCTV1",
-                url = "http://a/slow.m3u8",
-                group = "央视频道",
-                logoUrl = "https://example.com/cctv1.png",
-                tvgName = "CCTV1",
-                responseTimeMs = 120,
-            ),
-            Channel(
-                title = "CCTV1",
-                url = "http://a/fast.m3u8",
-                group = "央视频道",
-                tvgName = "CCTV1",
-                responseTimeMs = 23,
-            ),
-            Channel(
-                title = "CCTV1",
-                url = "http://a/mid.m3u8",
-                group = "央视频道",
-                logoUrl = "https://example.com/cctv1.png",
-                tvgName = "CCTV1",
-                responseTimeMs = 45,
-            ),
+            Channel(title = "CCTV1", url = "http://a/slow.m3u8", tvgName = "CCTV1", logoUrl = "https://x/a.png"),
+            Channel(title = "CCTV1", url = "http://a/fast.m3u8", tvgName = "CCTV1"),
+            Channel(title = "CCTV1", url = "http://a/mid.m3u8", tvgName = "CCTV1"),
         )
-
         val groups = ChannelGrouper.group(channels)
-        val group = groups.single()
-
-        assertEquals(0, group.defaultVariantIndex)
-        assertEquals("http://a/fast.m3u8", group.defaultChannel.url)
-        assertEquals(23, group.variants[0].channel.responseTimeMs)
-        assertEquals("https://example.com/cctv1.png", group.logoUrl)
+        val best = ChannelGrouper.pickBestVariantIndex(
+            groups.single().variants,
+            mapOf(
+                "http://a/slow.m3u8" to 180,
+                "http://a/fast.m3u8" to 28,
+                "http://a/mid.m3u8" to 90,
+            )
+        )
+        assertEquals(1, best)
     }
 
     @Test

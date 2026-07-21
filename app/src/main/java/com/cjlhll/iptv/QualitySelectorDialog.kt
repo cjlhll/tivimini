@@ -43,6 +43,7 @@ import androidx.tv.material3.Text
 data class SourceVariantUi(
     val label: String,
     val latencyMs: Int?,
+    val probing: Boolean = false,
     val selected: Boolean
 )
 
@@ -121,7 +122,11 @@ fun QualitySelectorDialog(
                         variants.forEachIndexed { index, variant ->
                             SourceOptionItem(
                                 label = variant.label,
-                                latencyText = formatLatency(variant.latencyMs),
+                                latencyText = when {
+                                    variant.probing && variant.latencyMs == null -> "测速中"
+                                    variant.latencyMs != null -> "${variant.latencyMs}ms"
+                                    else -> "超时"
+                                },
                                 selected = variant.selected,
                                 focusRequester = itemRequesters.getOrNull(index),
                                 onClick = { onSelect(index) }
@@ -133,10 +138,6 @@ fun QualitySelectorDialog(
             }
         }
     }
-}
-
-private fun formatLatency(latencyMs: Int?): String {
-    return if (latencyMs != null) "${latencyMs}ms" else "未知"
 }
 
 @Composable
