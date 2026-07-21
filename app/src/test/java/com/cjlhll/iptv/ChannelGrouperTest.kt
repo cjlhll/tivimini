@@ -412,6 +412,52 @@ class ChannelGrouperTest {
         assertEquals("央视频道", groups.first().group)
     }
 
+    @Test
+    fun defaultVariantPicksLowestResponseTime() {
+        val channels = listOf(
+            Channel(
+                title = "CCTV1",
+                url = "http://a/slow.m3u8",
+                group = "央视频道",
+                logoUrl = "https://example.com/cctv1.png",
+                tvgName = "CCTV1",
+                responseTimeMs = 120,
+            ),
+            Channel(
+                title = "CCTV1",
+                url = "http://a/fast.m3u8",
+                group = "央视频道",
+                tvgName = "CCTV1",
+                responseTimeMs = 23,
+            ),
+            Channel(
+                title = "CCTV1",
+                url = "http://a/mid.m3u8",
+                group = "央视频道",
+                logoUrl = "https://example.com/cctv1.png",
+                tvgName = "CCTV1",
+                responseTimeMs = 45,
+            ),
+        )
+
+        val groups = ChannelGrouper.group(channels)
+        val group = groups.single()
+
+        assertEquals(0, group.defaultVariantIndex)
+        assertEquals("http://a/fast.m3u8", group.defaultChannel.url)
+        assertEquals(23, group.variants[0].channel.responseTimeMs)
+        assertEquals("https://example.com/cctv1.png", group.logoUrl)
+    }
+
+    @Test
+    fun parseResponseTimeMsFromM3uAttribute() {
+        assertEquals(120, M3uParser.parseResponseTimeMs("120ms"))
+        assertEquals(45, M3uParser.parseResponseTimeMs("45ms"))
+        assertEquals(23, M3uParser.parseResponseTimeMs("23"))
+        assertEquals(null, M3uParser.parseResponseTimeMs(null))
+        assertEquals(null, M3uParser.parseResponseTimeMs(""))
+    }
+
     private fun cctv2(title: String, url: String): Channel {
         return Channel(
             title = title,

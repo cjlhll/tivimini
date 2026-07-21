@@ -40,8 +40,9 @@ import androidx.compose.ui.unit.dp
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 
-data class QualityVariantUi(
+data class SourceVariantUi(
     val label: String,
+    val latencyMs: Int?,
     val selected: Boolean
 )
 
@@ -49,7 +50,7 @@ data class QualityVariantUi(
 fun QualitySelectorDialog(
     visible: Boolean,
     channelTitle: String,
-    variants: List<QualityVariantUi>,
+    variants: List<SourceVariantUi>,
     onSelect: (Int) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
@@ -90,7 +91,7 @@ fun QualitySelectorDialog(
         ) {
             Box(
                 modifier = Modifier
-                    .width(360.dp)
+                    .width(400.dp)
                     .heightIn(max = 480.dp)
                     .background(container, shape)
                     .padding(24.dp)
@@ -99,7 +100,7 @@ fun QualitySelectorDialog(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "清晰度选择",
+                        text = "源选择",
                         style = MaterialTheme.typography.headlineSmall,
                         color = MaterialTheme.colorScheme.onSurface
                     )
@@ -118,8 +119,10 @@ fun QualitySelectorDialog(
                             .verticalScroll(scrollState)
                     ) {
                         variants.forEachIndexed { index, variant ->
-                            QualityOptionItem(
-                                text = if (variant.selected) "${variant.label} (当前)" else variant.label,
+                            SourceOptionItem(
+                                label = variant.label,
+                                latencyText = formatLatency(variant.latencyMs),
+                                selected = variant.selected,
                                 focusRequester = itemRequesters.getOrNull(index),
                                 onClick = { onSelect(index) }
                             )
@@ -132,9 +135,15 @@ fun QualitySelectorDialog(
     }
 }
 
+private fun formatLatency(latencyMs: Int?): String {
+    return if (latencyMs != null) "${latencyMs}ms" else "未知"
+}
+
 @Composable
-private fun QualityOptionItem(
-    text: String,
+private fun SourceOptionItem(
+    label: String,
+    latencyText: String,
+    selected: Boolean,
     focusRequester: FocusRequester?,
     onClick: () -> Unit,
 ) {
@@ -143,6 +152,7 @@ private fun QualityOptionItem(
         focused -> MaterialTheme.colorScheme.surfaceVariant
         else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.01f)
     }
+    val title = if (selected) "$label (当前)" else label
 
     Row(
         modifier = Modifier
@@ -159,9 +169,19 @@ private fun QualityOptionItem(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = text,
+            text = title,
             style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurface
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            text = latencyText,
+            style = MaterialTheme.typography.titleMedium,
+            color = if (selected || focused) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+            }
         )
     }
 }

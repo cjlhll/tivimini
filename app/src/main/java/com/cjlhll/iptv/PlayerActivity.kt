@@ -974,8 +974,9 @@ fun VideoPlayerScreen(
             } else {
                 playingVariantIndex
             }
-            QualityVariantUi(
+            SourceVariantUi(
                 label = variant.qualityLabel,
+                latencyMs = variant.channel.responseTimeMs,
                 selected = index == selectedIndex
             )
         }.orEmpty()

@@ -10,6 +10,7 @@ object M3uParser {
     private val tvgNameRegex = Regex("tvg-name=\"([^\"]*)\"")
     private val catchupRegex = Regex("catchup=[\"']?([^\"'\\s]*)[\"']?")
     private val catchupSourceRegex = Regex("catchup-source=[\"']?([^\"']*)[\"']?")
+    private val responseTimeRegex = Regex("""response-time=["']?([^"'\s,]*)["']?""", RegexOption.IGNORE_CASE)
 
     fun parse(content: String): List<Channel> {
         val channels = ArrayList<Channel>()
@@ -21,6 +22,7 @@ object M3uParser {
         var pendingTvgName: String? = null
         var pendingCatchup: String? = null
         var pendingCatchupSource: String? = null
+        var pendingResponseTimeMs: Int? = null
 
         var logCount = 0
 
@@ -40,6 +42,9 @@ object M3uParser {
                 pendingTvgName = tvgNameRegex.find(line)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
                 pendingCatchup = catchupRegex.find(line)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
                 pendingCatchupSource = catchupSourceRegex.find(line)?.groupValues?.getOrNull(1)?.takeIf { it.isNotBlank() }
+                pendingResponseTimeMs = parseResponseTimeMs(
+                    responseTimeRegex.find(line)?.groupValues?.getOrNull(1)
+                )
                 pendingTitle = line.substringAfterLast(',', missingDelimiterValue = "").trim().takeIf { it.isNotBlank() }
                 
                 if (pendingCatchup != null || pendingCatchupSource != null) {
@@ -64,7 +69,8 @@ object M3uParser {
                     tvgId = pendingTvgId,
                     tvgName = pendingTvgName,
                     catchupMode = pendingCatchup ?: "append",
-                    catchupSource = pendingCatchupSource ?: "?playseek=\${(b)yyyyMMddHHmmss}-\${(e)yyyyMMddHHmmss}"
+                    catchupSource = pendingCatchupSource ?: "?playseek=\${(b)yyyyMMddHHmmss}-\${(e)yyyyMMddHHmmss}",
+                    responseTimeMs = pendingResponseTimeMs,
                 )
             )
 
@@ -75,8 +81,15 @@ object M3uParser {
             pendingTvgName = null
             pendingCatchup = null
             pendingCatchupSource = null
+            pendingResponseTimeMs = null
         }
 
         return channels
+    }
+
+    internal fun parseResponseTimeMs(raw: String?): Int? {
+        if (raw.isNullOrBlank()) return null
+        val digits = raw.trim().lowercase().removeSuffix("ms").trim()
+        return digits.toIntOrNull()?.takeIf { it >= 0 }
     }
 }

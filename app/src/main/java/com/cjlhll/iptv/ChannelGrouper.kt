@@ -54,22 +54,35 @@ object ChannelGrouper {
         }
 
         return groupedMembers.map { members ->
-            val variants = members.mapIndexed { index, channel ->
-                ChannelVariant(channel, qualityLabel(channel, index))
+            val sortedMembers = members.sortedWith(
+                compareBy<Channel> { it.responseTimeMs ?: Int.MAX_VALUE }
+                    .thenBy { if (it.logoUrl.isNullOrBlank()) 1 else 0 }
+            )
+            val variants = sortedMembers.mapIndexed { index, channel ->
+                ChannelVariant(channel, sourceLabel(channel, index))
             }
-            val defaultIndex = variants.indexOfFirst { !it.channel.logoUrl.isNullOrBlank() }
-                .takeIf { it >= 0 } ?: 0
+            val defaultIndex = pickLowestLatencyIndex(variants)
             val defaultChannel = variants[defaultIndex].channel
+            val logoUrl = sortedMembers.firstNotNullOfOrNull { it.logoUrl?.takeIf { url -> url.isNotBlank() } }
             val allKeys = members.flatMap { mergeKeys(it).asIterable() }.toSet()
             ChannelGroup(
                 key = pickPrimaryKey(allKeys),
                 displayTitle = displayTitleForGroup(members, defaultChannel),
-                logoUrl = defaultChannel.logoUrl,
+                logoUrl = logoUrl,
                 group = pickGroupTitle(members) ?: resolveGroup(defaultChannel),
                 variants = variants,
                 defaultVariantIndex = defaultIndex
             )
         }
+    }
+
+    internal fun pickLowestLatencyIndex(variants: List<ChannelVariant>): Int {
+        if (variants.isEmpty()) return 0
+        return variants.indices.minWithOrNull(
+            compareBy<Int> { variants[it].channel.responseTimeMs ?: Int.MAX_VALUE }
+                .thenBy { if (variants[it].channel.logoUrl.isNullOrBlank()) 1 else 0 }
+                .thenBy { it }
+        ) ?: 0
     }
 
     fun findGroupIndexByUrl(groups: List<ChannelGroup>, url: String?): Int? {
@@ -181,7 +194,10 @@ object ChannelGrouper {
     fun displayChannels(groups: List<ChannelGroup>): List<Channel> {
         return groups.map { group ->
             val channel = group.defaultChannel
-            channel.copy(title = EpgNormalize.displayName(group.displayTitle))
+            channel.copy(
+                title = EpgNormalize.displayName(group.displayTitle),
+                logoUrl = group.logoUrl ?: channel.logoUrl,
+            )
         }
     }
 
@@ -309,7 +325,16 @@ object ChannelGrouper {
         return number?.removeSuffix("+")?.takeIf { it in cctvCartoonNumbers }
     }
 
-    private fun qualityLabel(channel: Channel, index: Int): String {
+    private fun sourceLabel(channel: Channel, index: Int): String {
+        val quality = qualityHint(channel)
+        return if (quality != null) {
+            "源${index + 1} · $quality"
+        } else {
+            "源${index + 1}"
+        }
+    }
+
+    private fun qualityHint(channel: Channel): String? {
         channel.tvgId?.let { id ->
             val suffix = id.substringAfterLast('@', "")
             if (suffix.isNotBlank() && suffix != id) {
@@ -339,6 +364,6 @@ object ChannelGrouper {
             channel.title.contains("标清") -> return "标清"
         }
 
-        return "线路${index + 1}"
+        return null
     }
 }

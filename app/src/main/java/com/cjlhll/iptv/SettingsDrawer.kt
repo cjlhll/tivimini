@@ -117,7 +117,7 @@ fun SettingsDrawer(
                         Spacer(modifier = Modifier.padding(8.dp))
 
                         SettingsItem(
-                            text = "清晰度选择",
+                            text = "源选择",
                             focusRequester = qualityMenuRequester,
                             onClick = onQualityMenuClick
                         )
